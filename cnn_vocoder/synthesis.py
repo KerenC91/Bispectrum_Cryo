@@ -34,11 +34,11 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_path', type=str, required=True,
-                        help='path to model checkpoint')
-    parser.add_argument('--spec_path', type=str, default="logs",
+    parser.add_argument('--model_path', type=str,  
+                        default="./checkpoint.th", help='path to model checkpoint')
+    parser.add_argument('--spec_path', type=str, default="./samples/spec1_gt.npy",
                         help='path to spec file')
-    parser.add_argument('--out_path', type=str, default=None,
+    parser.add_argument('--out_path', type=str, default="./output/out1_gt.wav",
                         help='output wav path')
     args = parser.parse_args()
     main(args)

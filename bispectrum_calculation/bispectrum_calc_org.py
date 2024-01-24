@@ -3,8 +3,6 @@ import os.path
 import numpy as np
 import random
 import torch
-from stingray.bispectrum import Bispectrum
-from stingray import lightcurve
 import matplotlib.pyplot as plt
 from scipy.signal import gausspulse
 from scipy import signal

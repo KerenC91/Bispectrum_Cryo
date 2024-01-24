@@ -1,7 +1,12 @@
-import tensorflow as tf
+#import tensorflow as tf
 import numpy as np
 
-hparams = tf.contrib.training.HParams(
+class HParams:
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+# Example usage:
+hparams = HParams(
     #####################################
     # Audio config
     #####################################

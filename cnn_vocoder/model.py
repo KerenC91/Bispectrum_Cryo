@@ -129,14 +129,15 @@ class Head(nn.Module):
         down_conv_channels (list): list of #channels in each down_conv blocks
         up_residuals (int, optional): number of residual blocks in each upsampling module. Default: 0
     """
-    def __init__(self, channels, 
-          pre_residuals=64,
-          pre_conv_channels=[64, 32, 16, 8, 4],
+    def __init__(self, channels, #[1025 * 2, 1024, 512, 256, 128, 64, 32, 16, 8]
+          pre_residuals=4,#64,
+          pre_conv_channels=[1, 1, 2],#[64, 32, 16, 8, 4],
           up_residuals=0,
-          post_residuals=2):
+          post_residuals=12#2
+          ):
         super(Head, self).__init__()
         pre_convs = []
-        c0 = pre_conv_channels[0]
+        c0 = pre_conv_channels[0]#1
         pre_convs.append(ConvBlock(1, c0, kernel_size=3, padding=1))
         for _ in range(pre_residuals):
             pre_convs.append(ResnetBlock(c0, c0))
@@ -149,13 +150,13 @@ class Head(nn.Module):
                 pre_convs.append(ResnetBlock(out_c, out_c))
         self.pre_conv = nn.Sequential(*pre_convs)
 
-        up_layers = []
+        pool_layers = []
         for i in range(len(channels) - 1):
             in_channels = channels[i]
             out_channels = channels[i + 1]
             layer = UpsamplingLayer(in_channels, out_channels, residuals=up_residuals)
-            up_layers.append(layer)
-        self.upsampling = nn.Sequential(*up_layers)
+            pool_layers.append(layer)
+        self.upsampling = nn.Sequential(*pool_layers)
 
         post_convs = []
         last_channels = channels[-1]
@@ -167,18 +168,30 @@ class Head(nn.Module):
         """
         forward pass
         Args:
-            x (Tensor): B x C x T
+            x (Tensor): B x C x T # 100X100X2
 
         Returns:
-            Tensor: B x C x (2^#channels * T)
+            Tensor: B x C x (2^#channels * T) # 100X100X(2^#channels * 2)
         """
-        x = x.unsqueeze(1) # reshape to [B x 1 x C x T]
+        print(x.shape)
+        x = x.unsqueeze(1) # reshape to [B x 1 x C x T]# 100X1X100X2
+        print(x.shape)
+
         x = self.pre_conv(x)
+        print(x.shape)
+
         s1, _, _, s4 = x.shape
+
         x = x.reshape(s1, -1, s4)
+        print(x.shape)
+
         x = self.upsampling(x)
+        print(x.shape)
+
         x2 = self.post_conv(x)
-        return x, x2
+        print(x2.shape)
+
+        return x, x2# pre, post
 
 
 DEFAULT_LAYERS_PARAMS = [80, 128, 128, 64, 64, 32, 16, 8, 1]
@@ -211,5 +224,172 @@ class CNNVocoder(nn.Module):
         rs0 = self.act_fn(rs0).squeeze(-1)
 
         rs1 = self.linear(post.transpose(1, 2))
+        print(rs1.shape)
         rs1 = self.act_fn(rs1).squeeze(-1)
+        print(rs1.shape)
+        return rs0, rs1 
+
+#------------ BS --------------
+class PoolLayer(nn.Module):
+    """Applies 1D pooling/conv1d operator over input tensor.
+
+    Args:
+        in_channels (int): number of input channels
+        out_channels (int): number of output channels
+        residuals (int, optional): number of residual blocks. Default=0
+    """
+    def __init__(self, in_channels, out_channels, residuals=0):
+        super(PoolLayer, self).__init__()
+        # TODO: try umsampling with bilinear interpolation 
+        #self.upsample = nn.Upsample(scale_factor=2, mode='linear')
+        #consider switching that with Pool1d
+        self.conv = nn.Conv1d(in_channels, out_channels, kernel_size=3, padding=1)      
+        torch.nn.init.xavier_uniform_(self.conv.weight)
+        self.bn = nn.BatchNorm1d(out_channels)
+        self.act = nn.ELU()     
+        self.pool = nn.MaxPool1d(kernel_size=2, stride=2, padding=0)
+        
+        if residuals != 0:
+            # resnet blocks
+            layers = []
+            for _ in range(residuals):
+                layers.append(
+                    ResnetBlock(out_channels, out_channels, one_d=True)
+                    )
+            self.res_blocks = nn.Sequential(*layers)
+        else:
+            self.res_blocks = None
+
+
+    def forward(self, x):
+        """
+        Args:
+            x (Tensor): B x in_channels x T
+        
+        Returns:
+            Tensor of shape (B, out_channels, T x 2)
+        """
+        # pool network
+        B, C, T = x.shape
+        # upsample
+        # x = x.unsqueeze(dim=3)
+        # x = F.upsample(x, size=(T*2, 1), mode='bilinear').squeeze(3)
+        #x = self.upsample(x)
+        # x = self.pad(x)
+        x = self.conv(x)
+        x = self.bn(x)
+        x = self.act(x)
+        #x = self.pool(x)
+
+        # pass through resnet blocks to improve internal representations
+        # of data
+        if self.res_blocks != None:
+            x = self.res_blocks(x)
+        return x
+    
+class HeadBS(nn.Module):
+    """HeadBS module
+
+    Args:
+        channels (list): list of #channels in each upsampling layer
+        pre_residuals (int, optional): number of residual blocks before upsampling. Default: 64
+        down_conv_channels (list): list of #channels in each down_conv blocks
+        up_residuals (int, optional): number of residual blocks in each upsampling module. Default: 0
+    """
+    def __init__(self, channels, #[1025 * 2, 1024, 512, 256, 128, 64, 32, 16, 8]
+          pre_residuals=4,#64,
+          pre_conv_channels=[1, 1, 2],#[64, 32, 16, 8, 4],
+          up_residuals=0,
+          post_residuals=12#2
+          ):
+        super(HeadBS, self).__init__()
+        pre_convs = []
+        c0 = pre_conv_channels[0]#1
+        pre_convs.append(ConvBlock(1, c0, kernel_size=3, padding=1))
+        for _ in range(pre_residuals):
+            pre_convs.append(ResnetBlock(c0, c0))
+
+        for i in range(len(pre_conv_channels) -1):
+            in_c = pre_conv_channels[i]
+            out_c = pre_conv_channels[i + 1]
+            pre_convs.append(ResnetBlock(in_c, out_c))
+            for _ in range(pre_residuals):
+                pre_convs.append(ResnetBlock(out_c, out_c))
+        self.pre_conv = nn.Sequential(*pre_convs)
+
+        pool_layers = []
+        for i in range(len(channels) - 1):
+            in_channels = channels[i]
+            out_channels = channels[i + 1]
+            layer = PoolLayer(in_channels, out_channels, residuals=up_residuals)
+            pool_layers.append(layer)
+        self.pooling = nn.Sequential(*pool_layers)
+
+        post_convs = []
+        last_channels = channels[-1]
+        for i in range(post_residuals):
+            post_convs.append(ResnetBlock(last_channels, last_channels, one_d=True, kernel_size=5))
+        self.post_conv = nn.Sequential(*post_convs)
+
+    def forward(self, x):
+        """
+        forward pass
+        Args:
+            x (Tensor): B x C x T # 100X100X2
+
+        Returns:
+            Tensor: B x C x (2^#channels * T) # 100X100X(2^#channels * 2)
+        """
+        print(x.shape)
+        x = x.unsqueeze(1) # reshape to [B x 1 x C x T]# 100X1X100X2
+        print(x.shape)
+
+        x = self.pre_conv(x)
+        print(x.shape)
+
+        s1, _, _, s4 = x.shape
+
+        x = x.reshape(1, -1, s4)
+        print(x.shape)
+
+        x = self.pooling(x)
+        print(x.shape)
+
+        x2 = self.post_conv(x)
+        print(x2.shape)
+
+        return x, x2# pre, post
+    
+    
+class CNNBS(nn.Module):
+    """CNNBS  - CNN for BS inversion
+
+    Args:
+        n_heads (int): Number of heads
+        layer_channels (list): list of #channels of each layer
+    """
+    def __init__(self, n_heads=3, 
+         channels=[100 * 4 * 2, 512, 256, 128, 64, 32, 16, 8],
+         pre_conv_channels=[2,2,4],
+         pre_residuals=4, 
+         up_residuals=0,
+         post_residuals=12):
+        super(CNNBS, self).__init__()
+        self.head = HeadBS(channels, 
+                pre_conv_channels=pre_conv_channels, 
+                pre_residuals=pre_residuals, up_residuals=up_residuals,
+                post_residuals=post_residuals)
+        self.linear = nn.Linear(channels[-1], 1)
+        self.act_fn = nn.Softsign()
+
+    def forward(self, x):
+        pre, post = self.head(x)
+       
+        rs0 = self.linear(pre.transpose(1, 2))
+        rs0 = self.act_fn(rs0).squeeze(-1)
+
+        rs1 = self.linear(post.transpose(1, 2))
+        print(rs1.shape)
+        rs1 = self.act_fn(rs1).squeeze(-1)
+        print(rs1.shape)
         return rs0, rs1 
