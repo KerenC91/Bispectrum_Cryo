@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import numpy as np
 
 class ResnetBlock(nn.Module):
     """Residual Block
@@ -80,10 +81,10 @@ class PoolLayer(nn.Module):
         #self.upsample = nn.Upsample(scale_factor=2, mode='linear')
         #consider switching that with Pool1d
         self.conv = nn.Conv1d(in_channels, out_channels, kernel_size=3, padding=1)      
-        torch.nn.init.xavier_uniform_(self.conv.weight)
+        # torch.nn.init.xavier_uniform_(self.conv.weight)
         self.bn = nn.BatchNorm1d(out_channels)
         self.act = nn.ELU()     
-        self.pool = nn.MaxPool1d(kernel_size=2, stride=2, padding=0)
+        # self.pool = nn.MaxPool1d(kernel_size=2, stride=2, padding=0)
         
         if residuals != 0:
             # resnet blocks
@@ -195,9 +196,65 @@ class HeadBS(nn.Module):
         #print(x2.shape)
 
         return x, x2# pre, post
-    
-    
+
+
 class CNNBS(nn.Module):
+    """CNNBS  - CNN for BS inversion
+
+    Args:
+        n_heads (int): Number of heads
+        layer_channels (list): list of #channels of each layer
+    """
+    def __init__(self, input_len=100, n_heads=3, 
+         channels=[100 * 4 * 2, 512, 256, 128, 64, 32, 16, 8],
+         pre_conv_channels=[2,2,4],
+         pre_residuals=4, 
+         up_residuals=0,
+         post_residuals=12):
+        # channels=[]
+        # bs_channels = 2
+        # ch1= int(input_len * pre_conv_channels[-1] * bs_channels)
+        # channels.append(ch1)
+        # ch2 = int(np.sqrt(np.power(2, np.floor(np.log(ch1)/np.log(2)))))
+        # channels.append(ch2)
+        # while ch2/2. > 0:
+        #     ch2 /= 2.
+        #     channels.append(int(ch2))
+        #     if int(ch2) == 8:
+        #        break
+        # print(len(channels))
+        super(CNNBS, self).__init__()
+        self.linear = nn.Linear(channels[-1], 1)
+        self.act_fn = nn.Softsign()
+        self.heads = nn.ModuleList([HeadBS(channels, 
+                pre_conv_channels=pre_conv_channels, 
+                pre_residuals=pre_residuals, up_residuals=up_residuals,
+                post_residuals=post_residuals)
+                                    for _ in range(n_heads)])
+
+    def forward(self, x):
+        pre_list = []
+        post_list = []
+        # Pass over Heads in "parallel"
+        for head in self.heads:
+            pre, post = head(x)
+            pre_list.append(pre)
+            post_list.append(post)
+        # Avrage Heads outputs
+        pre = torch.mean(torch.stack(pre_list), dim=0)
+        post = torch.mean(torch.stack(post_list), dim=0)
+        
+        # Pre output
+        rs0 = self.linear(pre.transpose(1, 2))
+        rs0 = self.act_fn(rs0).squeeze(-1)
+        
+        # Post output - actually used
+        rs1 = self.linear(post.transpose(1, 2))
+        rs1 = self.act_fn(rs1).squeeze(-1)
+        
+        return rs0, rs1 
+
+class CNNBSSingleHead(nn.Module):
     """CNNBS  - CNN for BS inversion
 
     Args:
@@ -210,22 +267,24 @@ class CNNBS(nn.Module):
          pre_residuals=4, 
          up_residuals=0,
          post_residuals=12):
-        super(CNNBS, self).__init__()
+        super(CNNBSSingleHead, self).__init__()
+        self.linear = nn.Linear(channels[-1], 1)
+        self.act_fn = nn.Softsign()
         self.head = HeadBS(channels, 
                 pre_conv_channels=pre_conv_channels, 
                 pre_residuals=pre_residuals, up_residuals=up_residuals,
                 post_residuals=post_residuals)
-        self.linear = nn.Linear(channels[-1], 1)
-        self.act_fn = nn.Softsign()
 
     def forward(self, x):
+        # Pass over Head
         pre, post = self.head(x)
-       
+        
+        # Pre output
         rs0 = self.linear(pre.transpose(1, 2))
         rs0 = self.act_fn(rs0).squeeze(-1)
-
+        
+        # Post output - actually used
         rs1 = self.linear(post.transpose(1, 2))
-        #print(rs1.shape)
         rs1 = self.act_fn(rs1).squeeze(-1)
-        #print(rs1.shape)
+        
         return rs0, rs1 

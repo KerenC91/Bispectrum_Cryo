@@ -3,18 +3,18 @@ from cnn_vocoder import model as vc_model
 import torch
 from hparams import hparams, hparams_debug_string
 import matplotlib.pyplot as plt
+import os
+
 
 if __name__ == "__main__":
-    folder_path = 'figures'
-    epoch = 1000
-    model_path = f'checkpoints/checkpoint_ep{epoch}.pt'
+    model_path = f'checkpoints/cnn{hparams.cnn_cnt}/checkpoint_ep{hparams.dbg_epoch}.pt'
     model = vc_model.CNNBS(
-        # n_heads=hparams.n_heads,
-        # layer_channels=hparams.layer_channels,
-        # pre_conv_channels=hparams.pre_conv_channels,
-        # pre_residuals=hparams.pre_residuals,
-        # up_residuals=hparams.up_residuals,
-        # post_residuals=hparams.post_residuals
+        n_heads=hparams.n_heads,
+        channels=hparams.layer_channels,
+        pre_conv_channels=hparams.pre_conv_channels,
+        pre_residuals=hparams.pre_residuals,
+        up_residuals=hparams.up_residuals,
+        post_residuals=hparams.post_residuals
     )
     model.load_state_dict(torch.load(model_path))
     model.eval()
@@ -35,11 +35,22 @@ if __name__ == "__main__":
     x_rec=x_rec.squeeze(0)
     loss = x - x_rec
     
+    if not os.path.exists(f'figures/cnn{hparams.cnn_cnt}'):
+        os.makedirs(f'figures/cnn{hparams.cnn_cnt}')
     plt.figure()
     plt.xlabel("time [sec]")
     plt.title('1D signal')
     plt.plot(x.detach().cpu().numpy(), label='x')
     plt.plot(x_rec.detach().cpu().numpy(), label='x_rec')
     plt.legend()
-    plt.savefig(f'{folder_path}/x_vs_x_rec_ep{epoch}.png')
+    plt.savefig(f'figures/cnn{hparams.cnn_cnt}/x_vs_x_rec_ep{hparams.dbg_epoch}.png')
     plt.close()
+    
+    # Get model summary as a string
+    summary = str(model)
+    
+    # Save summary to file
+    if not os.path.exists('models'):
+        os.makedirs('models')
+    with open(f'models/cnn{hparams.cnn_cnt}.yml', "w") as f:
+        f.write(summary)
