@@ -177,23 +177,23 @@ class HeadBS(nn.Module):
         Returns:
             Tensor: B x C x (2^#channels * T) # 100X100X(2^#channels * 2)
         """
-        #print(x.shape)
+        print(x.shape)
         x = x.unsqueeze(1) # reshape to [B x 1 x C x T]# 100X1X100X2
-        #print(x.shape)
+        print(x.shape)
 
         x = self.pre_conv(x)
-        #print(x.shape)
+        print(x.shape)
 
         s1, _, _, s4 = x.shape
 
         x = x.reshape(1, -1, s4)
-        #print(x.shape)
+        print(x.shape)
 
         x = self.pooling(x)
-        #print(x.shape)
+        print(x.shape)
 
         x2 = self.post_conv(x)
-        #print(x2.shape)
+        print(x2.shape)
 
         return x, x2# pre, post
 
@@ -225,7 +225,7 @@ class CNNBS(nn.Module):
         # print(len(channels))
         super(CNNBS, self).__init__()
         self.linear = nn.Linear(channels[-1], 1)
-        self.act_fn = nn.Softsign()
+        self.act_fn = nn.LeakyReLU()#nn.Softsign()
         self.heads = nn.ModuleList([HeadBS(channels, 
                 pre_conv_channels=pre_conv_channels, 
                 pre_residuals=pre_residuals, up_residuals=up_residuals,
@@ -233,17 +233,21 @@ class CNNBS(nn.Module):
                                     for _ in range(n_heads)])
 
     def forward(self, x):
-        pre_list = []
-        post_list = []
+
         # Pass over Heads in "parallel"
-        for head in self.heads:
-            pre, post = head(x)
-            pre_list.append(pre)
-            post_list.append(post)
-        # Avrage Heads outputs
-        pre = torch.mean(torch.stack(pre_list), dim=0)
-        post = torch.mean(torch.stack(post_list), dim=0)
-        
+        if self.n_heads > 1:
+            pre_list = []
+            post_list = []
+            for head in self.heads:
+                pre, post = head(x)
+                pre_list.append(pre)
+                post_list.append(post)
+            # Avrage Heads outputs
+            pre = torch.mean(torch.stack(pre_list), dim=0)
+            post = torch.mean(torch.stack(post_list), dim=0)
+        else:
+            # Pass over Head
+            pre, post = self.heads[0](x)
         # Pre output
         rs0 = self.linear(pre.transpose(1, 2))
         rs0 = self.act_fn(rs0).squeeze(-1)
@@ -254,37 +258,3 @@ class CNNBS(nn.Module):
         
         return rs0, rs1 
 
-class CNNBSSingleHead(nn.Module):
-    """CNNBS  - CNN for BS inversion
-
-    Args:
-        n_heads (int): Number of heads
-        layer_channels (list): list of #channels of each layer
-    """
-    def __init__(self, n_heads=3, 
-         channels=[100 * 4 * 2, 512, 256, 128, 64, 32, 16, 8],
-         pre_conv_channels=[2,2,4],
-         pre_residuals=4, 
-         up_residuals=0,
-         post_residuals=12):
-        super(CNNBSSingleHead, self).__init__()
-        self.linear = nn.Linear(channels[-1], 1)
-        self.act_fn = nn.Softsign()
-        self.head = HeadBS(channels, 
-                pre_conv_channels=pre_conv_channels, 
-                pre_residuals=pre_residuals, up_residuals=up_residuals,
-                post_residuals=post_residuals)
-
-    def forward(self, x):
-        # Pass over Head
-        pre, post = self.head(x)
-        
-        # Pre output
-        rs0 = self.linear(pre.transpose(1, 2))
-        rs0 = self.act_fn(rs0).squeeze(-1)
-        
-        # Post output - actually used
-        rs1 = self.linear(post.transpose(1, 2))
-        rs1 = self.act_fn(rs1).squeeze(-1)
-        
-        return rs0, rs1 

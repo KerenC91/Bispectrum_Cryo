@@ -12,6 +12,8 @@ from hparams import hparams, hparams_debug_string
 import matplotlib.pyplot as plt
 import numpy as np
 
+DEBUG = True
+
 class Trainer:
     def __init__(self, model, 
                  train_loader, 
@@ -38,13 +40,14 @@ class Trainer:
         if self.mode == 'rand':
             self.batch_size = 1
         elif self.mode == 'opt':
-            self.single_target = hparams.fixed_sample
-            self.single_source, self.single_target = self._create_rand_data(target=self.single_target)
+            self.single_target = hparams.fixed_sample[:self.target_len]
+            self.single_source, self.single_target = self.create_rand_data(target=self.single_target)
             self.train_data_size = 1
         self.epoch = 0
         self.last_loss = torch.inf
         self.early_stopping = args.early_stopping
         self.es_cnt = 0
+        self.suffix = args.suffix
     
     def _loss(self, pred, target):
         bs_pred, _, _ = calculate_bispectrum_power_spectrum_efficient(pred)
@@ -208,7 +211,7 @@ class Trainer:
         loss = self._loss(output, target)
         return loss
 
-    def _create_rand_data(self, target):
+    def create_rand_data(self, target):
         # Create data
         bs, ps, f = calculate_bispectrum_power_spectrum_efficient(target)
         bs_real = bs.real.float()
@@ -221,7 +224,7 @@ class Trainer:
         
     def _run_batch_rand(self):
         if self.mode == 'rand':
-            source, target = self._create_rand_data(target=torch.randn(self.target_len)  )
+            source, target = self.create_rand_data(target=torch.randn(self.target_len)  )
         elif self.mode == 'opt':
             source, target = self.single_source, self.single_target
         else:
@@ -232,28 +235,29 @@ class Trainer:
         # Forward pass
         _, output = self.model(source) # reconstructed signal
         
-        if self.epoch % hparams.dbg_draw_rate == 0:
-            self.plot_output_debug(target, output)
+        # if self.epoch % hparams.dbg_draw_rate == 0:
+        #     self.plot_output_debug(target, output)
         
         # Loss calculation
         loss = self._loss(output, target)
         return loss
 
     def plot_output_debug(self, target, output):
-        if not os.path.exists(f'figures/cnn{hparams.cnn_cnt}'):
-            os.makedirs(f'figures/cnn{hparams.cnn_cnt}')
+        folder = f'figures/cnn_{self.suffix}'
+        if not os.path.exists(folder):
+            os.makedirs(folder)
         plt.figure()
         plt.xlabel("time [sec]")
         plt.title('1D signal')
         plt.plot(target.squeeze(0).detach().cpu().numpy(), label='x')
         plt.plot(output.squeeze(0).detach().cpu().numpy(), label='x_rec')
         plt.legend()
-        plt.savefig(f'figures/cnn{hparams.cnn_cnt}/x_vs_x_rec_ep{self.epoch}.png')
+        plt.savefig(f'{folder}/x_vs_x_rec_ep{self.epoch}.png')
         plt.close()
    
     def _save_checkpoint(self, epoch):
         ckp = self.model.state_dict()
-        folder = f'./checkpoints/cnn{hparams.cnn_cnt}'
+        folder = f'./checkpoints/cnn_{self.suffix}'
         PATH = f"{folder}/checkpoint_ep{epoch}.pt"
         if not os.path.exists(folder):
             os.makedirs(folder)
@@ -381,7 +385,12 @@ class Trainer:
                         print(f'Stooped at epoch {self.epoch}, after {self.es_cnt} times\n'
                               f'last_loss={self.last_loss}, curr_los={train_loss}')
                         return
+            if train_loss < hparams.loss_lim:
+                print(f'Stooped at epoch {self.epoch},\n'
+                      f'curr_los={train_loss} < {hparams.loss_lim}')
+    
                 self.last_loss = train_loss
+                
       
 def main(debug_args=None):
     # Add arguments to parser
@@ -434,31 +443,28 @@ def main(debug_args=None):
     # Parse arguments
     args = parser.parse_args()
 
+    if DEBUG ==  True:
+        args.N = 100
+        args.channels = [1600, 8]
+        args.pre_conv_channels = [2, 2, 4, 8]
+        args.pre_residuals = 5 
+        args.up_residuals = 4 
+        args.post_residuals = 1
     # Set wandb flag
     wandb_flag = args.wandb
     if (args.wandb_log_interval == 0):
         wandb_flag = False
     
     # Initialize model and optimizer
-    if args.n_heads == 1:
-        model = CNNBSSingleHead(
-            n_heads=1,
-            channels=args.channels,
-            pre_conv_channels=args.pre_conv_channels,
-            pre_residuals=args.pre_residuals,
-            up_residuals=args.up_residuals,
-            post_residuals=args.post_residuals
-            )
-    else:
-        model = CNNBS(
-            input_len=args.N,
-            n_heads=1,
-            channels=args.channels,
-            pre_conv_channels=args.pre_conv_channels,
-            pre_residuals=args.pre_residuals,
-            up_residuals=args.up_residuals,
-            post_residuals=args.post_residuals
-            )
+    model = CNNBS(
+        input_len=args.N,
+        n_heads=1,
+        channels=args.channels,
+        pre_conv_channels=args.pre_conv_channels,
+        pre_residuals=args.pre_residuals,
+        up_residuals=args.up_residuals,
+        post_residuals=args.post_residuals
+        )
     # Get model summary as a string
     print(f'input length: {args.N}')
     print(f'model architecture:\n'
@@ -475,7 +481,7 @@ def main(debug_args=None):
     # Save summary to file
     if not os.path.exists('models'):
         os.makedirs('models')
-    with open(f'models/cnn{hparams.cnn_cnt}.yml', "w") as f:
+    with open(f'models/cnn_{args.suffix}.yml', "w") as f:
         f.write(summary)
     print(f'CNN arch yml: models/cnn_{args.suffix}.yml')
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
@@ -500,6 +506,17 @@ def main(debug_args=None):
     # Train and evaluate
     trainer.run()
     end_time = time.time()
+    if args.mode == 'opt':
+        target = hparams.fixed_sample
+        source, target = trainer.create_rand_data(target)
+        # Move data to device
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu") 
+        target = target.to(device)
+        source = source.to(device)
+        # Forward pass
+        _, output = trainer.model(source)
+        trainer.plot_output_debug(target, output)
+        
     print(f"Time taken to train in {os.path.basename(__file__)}:", 
           end_time - start_time, "seconds")
 
