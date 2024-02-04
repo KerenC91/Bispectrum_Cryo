@@ -36,17 +36,16 @@ class Trainer:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu") 
         self.model = model.to(self.device)
         self.wandb_flag = wandb_flag
+        self.normalize = args.normalize
         self.mode = args.mode
         if self.mode == 'rand':
             self.batch_size = 1
         elif self.mode == 'opt':
             self.single_target = hparams.fixed_sample[:self.target_len]
-            mean = torch.mean(self.single_target)
-            std = torch.std(self.single_target)
-            self.single_target = (self.single_target - mean) / std
-            # transform = transforms.Compose([transforms.ToTensor(),
-            #                                 transforms.Normalize(mean, std)])
-            # self.single_target = transform(self.single_target.unsqueeze(0).numpy())
+            if self.normalize == True:
+                mean = torch.mean(self.single_target)
+                std = torch.std(self.single_target)
+                self.single_target = (self.single_target - mean) / std
             self.single_source, self.single_target = self.create_rand_data(target=self.single_target)
             self.train_data_size = 1
         self.epoch = 0
@@ -78,7 +77,7 @@ class Trainer:
             loss_l1 = self._loss_l1(pred, target)
             total_loss += hparams.f5 * loss_l1
                                     
-        return total_loss
+        return total_loss, self._loss_MSE(pred, target), self._loss_MSE_norm(pred, target)
     
 
     def _get_params(self):
@@ -240,6 +239,26 @@ class Trainer:
         # target - ground truth image, source - Bispectrum of ground truth image
         # might be multiple targets and sources (batch size > 1)
         
+    def _loss_MSE(self, pred, target):
+        """
+        
+
+        Parameters
+        ----------
+        pred : TYPE     torch complex-float, NXNX1
+            rec_s - reconstructed signal.
+        target : TYPE     torch complex-float, NXNX1
+            s - target signal (GT).
+
+        Returns
+        -------
+        TYPE    torch float
+        || s - rec_s ||_1 / len(s)
+
+        """
+        loss = torch.nn.MSELoss()
+        return loss(pred, target)
+        
     def _run_batch(self, source, target):
         # Move data to device
         target = target.to(self.device)
@@ -317,29 +336,34 @@ class Trainer:
             # update avg loss 
             total_loss += loss.item()
             
-            
         avg_loss = total_loss / self.train_data_size
         
         return avg_loss
     
     def _run_epoch_train_rand(self):
         total_loss = 0
-                
+        total_mse_loss = 0
+        total_mse_norm_loss = 0
+        
         for _ in range(self.train_data_size):
             # zero grads
             self.optimizer.zero_grad()
             # forward pass + loss computation
-            loss = self._run_batch_rand()
+            loss, mse_loss, mse_norm_loss = self._run_batch_rand()
             # backward pass
             loss.backward()
             # optimizer step
             self.optimizer.step()
             # update avg loss 
             total_loss += loss.item()
+            total_mse_loss += mse_loss.item()
+            total_mse_norm_loss += mse_norm_loss.item()
             
         avg_loss = total_loss / self.train_data_size
-            
-        return avg_loss
+        avg_mse_loss = total_mse_loss / self.train_data_size 
+        avg_mse_norm_loss = total_mse_norm_loss / self.train_data_size 
+        
+        return avg_loss, avg_mse_loss, avg_mse_norm_loss
     
     def _run_epoch_validate(self):
         total_loss = 0
@@ -368,9 +392,9 @@ class Trainer:
                 loss = self._run_batch_rand()
                 # update avg loss 
                 total_loss += loss.item()
-            
+                
         avg_loss = total_loss / self.val_data_size
-            
+
         return avg_loss
                
     def train(self):
@@ -403,7 +427,8 @@ class Trainer:
             if self.mode != 'opt':
                 val_loss = self.validate()
                 test_loss = self.test()
-            
+            else:
+                train_loss, mse_loss, mse_norm_loss = train_loss
             if self.wandb_flag and self.epoch % self.wandb_log_interval == 0:
                 wandb.log({"train_loss": train_loss})
                 if self.mode != 'opt':
@@ -411,10 +436,12 @@ class Trainer:
                     #wandb.log({"test_loss": test_loss})
             if self.epoch % self.save_every == 0:
                 print(f'-------Epoch {self.epoch}/{self.num_epochs}-------')
-                print(f'Train loss: {train_loss:.3f}')
+                print(f'Train loss: {train_loss:.6f}')
                 if self.mode != 'opt':
-                    print(f'Validation loss: {val_loss:.3f}')
-
+                    print(f'Validation loss: {val_loss:.6f}')
+                else:
+                    print(f'Train mse loss: {mse_loss:.6f}')
+                    print(f'Train mse norm loss: {mse_norm_loss:.6f}')
                 self._save_checkpoint(self.epoch)
             # plot last output
             if self.epoch == self.num_epochs - 1:
@@ -479,7 +506,12 @@ def main():
     parser.add_argument('--post_residuals', type=int, default=12, 
                         help='number of cnn heads')
     parser.add_argument('--maxout', type=bool, default=False, 
-                        help='True for maxout in middle layer, False for conv1')
+                        help='True for maxout in middle layer, False for conv1 (default)')
+    parser.add_argument('--pow_2_channels', type=bool, default=False, 
+                        help='True for power of 2 channels, '
+                        'False for 1 layer with output channel of 8 (default)')
+    parser.add_argument('--normalize', type=bool, default=False, 
+                        help='normalizing data for True, else False (default)')
     #evaluates to True if not provided, else False
     parser.add_argument('--early_stopping', type=int, default=100,  
                         help='early stopping after <early_stopping> times')  
@@ -496,6 +528,7 @@ def main():
         args.up_residuals = 4 
         args.post_residuals = 1
         args.n_heads = 3
+        print('WARNING!! DEBUG value is True!')
     # Set wandb flag
     wandb_flag = args.wandb
     if (args.wandb_log_interval == 0):
@@ -510,7 +543,8 @@ def main():
         pre_conv_channels=args.pre_conv_channels,
         pre_residuals=args.pre_residuals,
         up_residuals=args.up_residuals,
-        post_residuals=args.post_residuals
+        post_residuals=args.post_residuals,
+        pow_2_channels=args.pow_2_channels
         )
     # Get model summary as a string
     mid_layer ='maxout' if args.maxout == True else 'conv1'
@@ -519,6 +553,7 @@ def main():
            f'n_heads={args.n_heads}\n'
            f'channels={args.channels}\n'
            f'mid layer={mid_layer}\n'
+           f'Normalize={args.normalize}\n'
           f'pre_conv_channels={args.pre_conv_channels}\n'
           f'pre_residuals={args.pre_residuals}\n'
           f'up_residuals={args.up_residuals}\n'

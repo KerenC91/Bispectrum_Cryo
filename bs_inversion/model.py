@@ -200,10 +200,13 @@ class HeadBS(nn.Module):
           pre_conv_channels=[1, 1, 2],#[64, 32, 16, 8, 4],
           up_residuals=0,
           b_maxout = False,
-          post_residuals=12#2
+          post_residuals=12,
+          pow_2_channels=False
           ):
         super(HeadBS, self).__init__()
+        # Initialize learnable output factor
         self.f = torch.nn.Parameter(torch.ones(1))
+        # Create pre_conv layer
         pre_convs = []
         c0 = pre_conv_channels[0]#1
         bs_channels = 2
@@ -218,25 +221,33 @@ class HeadBS(nn.Module):
             for _ in range(pre_residuals):
                 pre_convs.append(ResnetBlock(out_c, out_c))
         self.pre_conv = nn.Sequential(*pre_convs)
-
+        
+        # Create middle layer
         mid_layers = []
         #print('start poooling')
         ch0 = pre_conv_channels[-1] * input_len # 8*100=800
-        get_closest_pow2_d = lambda x: np.power(2, int(np.log(x) / np.log(2)))
-        ch1 = get_closest_pow2_d(ch0)#512, 256, 128, 64, 32, 16, 8
-        mid_layers.append(ConvBlock(ch0, ch1, kernel_size=3, padding=1, one_d=True))
-        #print(f'ConvBlock {ch0}, {ch1}')
-        while ch1/2. > 0:
-            in_channels = ch1
-            out_channels = int(ch1/2.)
-            ch1 = int(ch1/2.)
-            layer = MidLayer(in_channels, out_channels, residuals=up_residuals, b_maxout=b_maxout)
-            mid_layers.append(layer)
-            #print(f'mid_layers {in_channels}, {out_channels}')
-            if int(ch1) == 8:
-                break
+        if pow_2_channels:
+            get_closest_pow2_d = lambda x: np.power(2, int(np.log(x) / np.log(2)))
+            ch1 = get_closest_pow2_d(ch0)#512, 256, 128, 64, 32, 16, 8
+            mid_layers.append(ConvBlock(ch0, ch1, kernel_size=3, padding=1, one_d=True))
+            #print(f'ConvBlock {ch0}, {ch1}')
+
+            while ch1/2. > 0:
+                in_channels = ch1
+                out_channels = int(ch1/2.)
+                ch1 = int(ch1/2.)
+                layer = MidLayer(in_channels, out_channels, residuals=up_residuals, b_maxout=b_maxout)
+                mid_layers.append(layer)
+                #print(f'mid_layers {in_channels}, {out_channels}')
+                if int(ch1) == 8:
+                    break
+        else:
+            ch1 = 8
+            mid_layers.append(ConvBlock(ch0, ch1, kernel_size=3, padding=1, one_d=True))
+           
         self.mid = nn.Sequential(*mid_layers)
-        #print('end poooling')
+        
+        # Create post layer
         post_convs = []
         last_channels = int(ch1)
         for i in range(post_residuals):
@@ -288,7 +299,8 @@ class CNNBS(nn.Module):
          pre_conv_channels=[2,2,4],
          pre_residuals=4, 
          up_residuals=0,
-         post_residuals=12):
+         post_residuals=12,
+         pow_2_channels=False):
         # channels=[]
         # bs_channels = 2
         # ch1= int(input_len * pre_conv_channels[-1] * bs_channels)
@@ -308,7 +320,7 @@ class CNNBS(nn.Module):
         self.heads = nn.ModuleList([HeadBS(input_len, channels, b_maxout=b_maxout,
                 pre_conv_channels=pre_conv_channels, 
                 pre_residuals=pre_residuals, up_residuals=up_residuals,
-                post_residuals=post_residuals)
+                post_residuals=post_residuals, pow_2_channels=pow_2_channels)
                                     for _ in range(n_heads)])
 
     def forward(self, x):
