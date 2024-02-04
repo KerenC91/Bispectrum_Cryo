@@ -7,26 +7,26 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import argparse
 from utils import calculate_bispectrum_power_spectrum_efficient
-from model import CNNBS, CNNBSSingleHead
+from model import CNNBS
 from hparams import hparams, hparams_debug_string
 import matplotlib.pyplot as plt
 import numpy as np
+from torch.autograd import Variable
+from torchvision import datasets, transforms
 
-DEBUG = True
+DEBUG = False
 
 class Trainer:
     def __init__(self, model, 
                  train_loader, 
                  val_loader, 
                  batch_size, 
-                 optimizer,
                  wandb_flag,
                  args):
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.batch_size = batch_size
         self.num_epochs = args.epochs
-        self.optimizer = optimizer
         self.wandb_log_interval = args.wandb_log_interval
         self.train_data_size = args.train_data_size
         self.val_data_size = args.val_data_size
@@ -41,6 +41,12 @@ class Trainer:
             self.batch_size = 1
         elif self.mode == 'opt':
             self.single_target = hparams.fixed_sample[:self.target_len]
+            mean = torch.mean(self.single_target)
+            std = torch.std(self.single_target)
+            self.single_target = (self.single_target - mean) / std
+            # transform = transforms.Compose([transforms.ToTensor(),
+            #                                 transforms.Normalize(mean, std)])
+            # self.single_target = transform(self.single_target.unsqueeze(0).numpy())
             self.single_source, self.single_target = self.create_rand_data(target=self.single_target)
             self.train_data_size = 1
         self.epoch = 0
@@ -48,6 +54,9 @@ class Trainer:
         self.early_stopping = args.early_stopping
         self.es_cnt = 0
         self.suffix = args.suffix
+        self.n_heads = args.n_heads
+        self.optimizer = optim.Adam(self.model.parameters(), lr=args.lr)
+
     
     def _loss(self, pred, target):
         bs_pred, _, _ = calculate_bispectrum_power_spectrum_efficient(pred)
@@ -72,6 +81,13 @@ class Trainer:
         return total_loss
     
 
+    def _get_params(self):
+        params = []
+        params += self.model.parameters()
+        params += self.f
+        
+        return params
+    
     def _loss_sc(self, bs_pred, bs_gt):
         """
         
@@ -180,6 +196,27 @@ class Trainer:
         # target - ground truth image, source - Bispectrum of ground truth image
         # might be multiple targets and sources (batch size > 1)
 
+    def _loss_MSE_norm(self, pred, target):
+        """
+        
+
+        Parameters
+        ----------
+        pred : TYPE     torch complex-float, NXNX1
+            rec_s - reconstructed signal.
+        target : TYPE     torch complex-float, NXNX1
+            s - target signal (GT).
+
+        Returns
+        -------
+        TYPE    torch float (normalized mse)
+            || s - rec_s ||_F / || s ||_F.
+
+        """
+        return torch.norm(target - pred) / torch.norm(target)
+        # target - ground truth image, source - Bispectrum of ground truth image
+        # might be multiple targets and sources (batch size > 1)
+
     def _loss_l1(self, pred, target):
         """
         
@@ -194,10 +231,12 @@ class Trainer:
         Returns
         -------
         TYPE    torch float
-            || s - rec_s ||_F / || s ||_F.
+        || s - rec_s ||_1 / len(s)
 
         """
-        return torch.norm(target - pred) / torch.norm(target)
+        loss = torch.nn.L1Loss()
+        return loss(pred, target)
+    
         # target - ground truth image, source - Bispectrum of ground truth image
         # might be multiple targets and sources (batch size > 1)
         
@@ -234,7 +273,7 @@ class Trainer:
         source = source.to(self.device)
         # Forward pass
         _, output = self.model(source) # reconstructed signal
-        
+        self.last_output = output
         # if self.epoch % hparams.dbg_draw_rate == 0:
         #     self.plot_output_debug(target, output)
         
@@ -377,13 +416,17 @@ class Trainer:
                     print(f'Validation loss: {val_loss:.3f}')
 
                 self._save_checkpoint(self.epoch)
-            
+            # plot last output
+            if self.epoch == self.num_epochs - 1:
+                self.plot_output_debug(self.single_target, self.last_output)
+            # stop early if early_stopping is on
             if self.early_stopping != 0:
                 if self.last_loss < train_loss:
                     self.es_cnt +=1
                     if self.es_cnt == self.early_stopping:
                         print(f'Stooped at epoch {self.epoch}, after {self.es_cnt} times\n'
                               f'last_loss={self.last_loss}, curr_los={train_loss}')
+                        self.plot_output_debug(self.single_target, self.last_output)
                         return
             if train_loss < hparams.loss_lim:
                 print(f'Stooped at epoch {self.epoch},\n'
@@ -392,7 +435,7 @@ class Trainer:
                 self.last_loss = train_loss
                 
       
-def main(debug_args=None):
+def main():
     # Add arguments to parser
     parser = argparse.ArgumentParser(description='Inverting the bispectrum. Pulse dataset')
 
@@ -435,6 +478,8 @@ def main(debug_args=None):
                         help='number of cnn heads')
     parser.add_argument('--post_residuals', type=int, default=12, 
                         help='number of cnn heads')
+    parser.add_argument('--maxout', type=bool, default=False, 
+                        help='True for maxout in middle layer, False for conv1')
     #evaluates to True if not provided, else False
     parser.add_argument('--early_stopping', type=int, default=100,  
                         help='early stopping after <early_stopping> times')  
@@ -450,6 +495,7 @@ def main(debug_args=None):
         args.pre_residuals = 5 
         args.up_residuals = 4 
         args.post_residuals = 1
+        args.n_heads = 3
     # Set wandb flag
     wandb_flag = args.wandb
     if (args.wandb_log_interval == 0):
@@ -458,33 +504,36 @@ def main(debug_args=None):
     # Initialize model and optimizer
     model = CNNBS(
         input_len=args.N,
-        n_heads=1,
+        n_heads=args.n_heads,
         channels=args.channels,
+        b_maxout = args.maxout,
         pre_conv_channels=args.pre_conv_channels,
         pre_residuals=args.pre_residuals,
         up_residuals=args.up_residuals,
         post_residuals=args.post_residuals
         )
     # Get model summary as a string
+    mid_layer ='maxout' if args.maxout == True else 'conv1'
     print(f'input length: {args.N}')
     print(f'model architecture:\n'
-          f'n_heads={args.n_heads}\n'
-          f'channels={args.channels}\n'
+           f'n_heads={args.n_heads}\n'
+           f'channels={args.channels}\n'
+           f'mid layer={mid_layer}\n'
           f'pre_conv_channels={args.pre_conv_channels}\n'
           f'pre_residuals={args.pre_residuals}\n'
           f'up_residuals={args.up_residuals}\n'
           f'post_residuals={args.post_residuals}\n'
-          f'early_stopping: {args.early_stopping}\n')
+          f'early_stopping={args.early_stopping}')
     
     summary = str(model)
-    
+
     # Save summary to file
     if not os.path.exists('models'):
         os.makedirs('models')
     with open(f'models/cnn_{args.suffix}.yml', "w") as f:
         f.write(summary)
     print(f'CNN arch yml: models/cnn_{args.suffix}.yml')
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    
     # Initialize trainer
     # If train_loader and test_loader are set to None, 
     # the data is created during training
@@ -492,7 +541,6 @@ def main(debug_args=None):
                       train_loader=None, 
                       val_loader=None, 
                       batch_size=1,                     
-                      optimizer=optimizer,
                       wandb_flag=wandb_flag,
                       args=args)
     
@@ -506,16 +554,16 @@ def main(debug_args=None):
     # Train and evaluate
     trainer.run()
     end_time = time.time()
-    if args.mode == 'opt':
-        target = hparams.fixed_sample
-        source, target = trainer.create_rand_data(target)
-        # Move data to device
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu") 
-        target = target.to(device)
-        source = source.to(device)
-        # Forward pass
-        _, output = trainer.model(source)
-        trainer.plot_output_debug(target, output)
+    # if args.mode == 'opt':
+    #     target = hparams.fixed_sample
+    #     source, target = trainer.create_rand_data(target)
+    #     # Move data to device
+    #     device = torch.device("cuda" if torch.cuda.is_available() else "cpu") 
+    #     target = target.to(device)
+    #     source = source.to(device)
+    #     # Forward pass
+    #     _, output = trainer.model(source)
+    #     trainer.plot_output_debug(target, output)
         
     print(f"Time taken to train in {os.path.basename(__file__)}:", 
           end_time - start_time, "seconds")

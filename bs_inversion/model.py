@@ -54,10 +54,15 @@ class ResnetBlock(nn.Module):
 
 
 class ConvBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, padding=1):
+    def __init__(self, in_channels, out_channels, kernel_size=3, padding=1, one_d=False):
         super(ConvBlock, self).__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, padding=padding)
-        self.bn = nn.BatchNorm2d(out_channels)
+        if not one_d:
+            self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, padding=padding)
+            self.bn = nn.BatchNorm2d(out_channels)
+        else:
+            self.conv = nn.Conv1d(in_channels, out_channels, kernel_size=kernel_size, padding=padding)
+            self.bn = nn.BatchNorm1d(out_channels)
+
         self.act = nn.ELU()
     
     def forward(self, x):
@@ -66,8 +71,59 @@ class ConvBlock(nn.Module):
         x = self.act(x)
         return x
 
+class MaxOut2D(nn.Module):
+    """
+    Pytorch implementation of MaxOut on channels for an input that is C x H x W.
+    Reshape input from N x C x H x W --> N x H*W x C --> perform MaxPool1D on dim 2, i.e. channels --> reshape back to
+    N x C//maxout_kernel x H x W.
+    """
+    def __init__(self, max_out):
+        super(MaxOut2D, self).__init__()
+        self.max_out = max_out
+        self.max_pool = nn.MaxPool1d(max_out)
 
-class PoolLayer(nn.Module):
+    def forward(self, x):
+        batch_size = x.shape[0]
+        channels = x.shape[1]
+        height = x.shape[2]
+        width = x.shape[3]
+        # Reshape input from N x C x H x W --> N x H*W x C
+        x_reshape = torch.permute(x, (0, 2, 3, 1)).view(batch_size, height * width, channels)
+        # Pool along channel dims
+        x_pooled = self.max_pool(x_reshape)
+        # Reshape back to N x C//maxout_kernel x H x W.
+        return torch.permute(x_pooled, (0, 2, 1)).view(batch_size, channels // self.max_out, height, width).contiguous()
+
+
+class MaxOut1D(nn.Module):
+    """
+    Pytorch implementation of MaxOut on channels for an input that is C x H x W.
+    Reshape input from N x C x H x W --> N x H*W x C --> perform MaxPool1D on dim 2, i.e. channels --> reshape back to
+    N x C//maxout_kernel x H x W.
+    """
+    def __init__(self, kernel_size=1, stride=2):
+        super(MaxOut1D, self).__init__()
+        self.max_out = kernel_size
+        self.max_pool = nn.MaxPool1d(kernel_size=kernel_size, stride=stride)
+
+    def forward(self, x):
+        batch_size = x.shape[0]
+        channels = x.shape[1]
+        layer = x.shape[2]
+        #print(f'channels={channels}')
+        #print(f'self.max_out={self.max_out}')
+
+        #print(x.shape)
+        # Reshape input from B x C x L --> B x L x C
+        x_reshape = torch.permute(x, (0, 2, 1))
+        #print(x_reshape.shape)
+        # Pool along channel dims
+        x_pooled = self.max_pool(x_reshape)
+        #print(x_pooled.shape)
+        # Reshape back to B x C//maxout_kernel x L.
+        return torch.permute(x_pooled, (0, 2, 1)).contiguous()
+
+class MidLayer(nn.Module):
     """Applies 1D pooling/conv1d operator over input tensor.
 
     Args:
@@ -75,13 +131,15 @@ class PoolLayer(nn.Module):
         out_channels (int): number of output channels
         residuals (int, optional): number of residual blocks. Default=0
     """
-    def __init__(self, in_channels, out_channels, residuals=0):
-        super(PoolLayer, self).__init__()
+    def __init__(self, in_channels, out_channels, residuals=0, b_maxout=False):
+        super(MidLayer, self).__init__()
         # TODO: try umsampling with bilinear interpolation 
         #self.upsample = nn.Upsample(scale_factor=2, mode='linear')
         #consider switching that with Pool1d
-        self.conv = nn.Conv1d(in_channels, out_channels, kernel_size=3, padding=1)      
-        # torch.nn.init.xavier_uniform_(self.conv.weight)
+        self.b_maxout = b_maxout
+        self.conv = nn.Conv1d(in_channels, out_channels, kernel_size=3, padding=1) 
+        self.maxout = MaxOut1D(kernel_size=1, stride=2)
+        torch.nn.init.xavier_uniform_(self.conv.weight)
         self.bn = nn.BatchNorm1d(out_channels)
         self.act = nn.ELU()     
         # self.pool = nn.MaxPool1d(kernel_size=2, stride=2, padding=0)
@@ -113,7 +171,11 @@ class PoolLayer(nn.Module):
         # x = F.upsample(x, size=(T*2, 1), mode='bilinear').squeeze(3)
         #x = self.upsample(x)
         # x = self.pad(x)
-        x = self.conv(x)
+        
+        if self.b_maxout == True:
+            x = self.maxout(x)
+        else:
+            x = self.conv(x)
         x = self.bn(x)
         x = self.act(x)
         #x = self.pool(x)
@@ -133,16 +195,19 @@ class HeadBS(nn.Module):
         down_conv_channels (list): list of #channels in each down_conv blocks
         up_residuals (int, optional): number of residual blocks in each upsampling module. Default: 0
     """
-    def __init__(self, channels, #[1025 * 2, 1024, 512, 256, 128, 64, 32, 16, 8]
+    def __init__(self, input_len, channels, #[1025 * 2, 1024, 512, 256, 128, 64, 32, 16, 8]
           pre_residuals=4,#64,
           pre_conv_channels=[1, 1, 2],#[64, 32, 16, 8, 4],
           up_residuals=0,
+          b_maxout = False,
           post_residuals=12#2
           ):
         super(HeadBS, self).__init__()
+        self.f = torch.nn.Parameter(torch.ones(1))
         pre_convs = []
         c0 = pre_conv_channels[0]#1
-        pre_convs.append(ConvBlock(1, c0, kernel_size=3, padding=1))
+        bs_channels = 2
+        pre_convs.append(ConvBlock(bs_channels, c0, kernel_size=3, padding=1))
         for _ in range(pre_residuals):
             pre_convs.append(ResnetBlock(c0, c0))
 
@@ -154,16 +219,26 @@ class HeadBS(nn.Module):
                 pre_convs.append(ResnetBlock(out_c, out_c))
         self.pre_conv = nn.Sequential(*pre_convs)
 
-        pool_layers = []
-        for i in range(len(channels) - 1):
-            in_channels = channels[i]
-            out_channels = channels[i + 1]
-            layer = PoolLayer(in_channels, out_channels, residuals=up_residuals)
-            pool_layers.append(layer)
-        self.pooling = nn.Sequential(*pool_layers)
-
+        mid_layers = []
+        #print('start poooling')
+        ch0 = pre_conv_channels[-1] * input_len # 8*100=800
+        get_closest_pow2_d = lambda x: np.power(2, int(np.log(x) / np.log(2)))
+        ch1 = get_closest_pow2_d(ch0)#512, 256, 128, 64, 32, 16, 8
+        mid_layers.append(ConvBlock(ch0, ch1, kernel_size=3, padding=1, one_d=True))
+        #print(f'ConvBlock {ch0}, {ch1}')
+        while ch1/2. > 0:
+            in_channels = ch1
+            out_channels = int(ch1/2.)
+            ch1 = int(ch1/2.)
+            layer = MidLayer(in_channels, out_channels, residuals=up_residuals, b_maxout=b_maxout)
+            mid_layers.append(layer)
+            #print(f'mid_layers {in_channels}, {out_channels}')
+            if int(ch1) == 8:
+                break
+        self.mid = nn.Sequential(*mid_layers)
+        #print('end poooling')
         post_convs = []
-        last_channels = channels[-1]
+        last_channels = int(ch1)
         for i in range(post_residuals):
             post_convs.append(ResnetBlock(last_channels, last_channels, one_d=True, kernel_size=5))
         self.post_conv = nn.Sequential(*post_convs)
@@ -177,24 +252,26 @@ class HeadBS(nn.Module):
         Returns:
             Tensor: B x C x (2^#channels * T) # 100X100X(2^#channels * 2)
         """
-        print(x.shape)
-        x = x.unsqueeze(1) # reshape to [B x 1 x C x T]# 100X1X100X2
-        print(x.shape)
+        #print(x.shape)
+        x = x.unsqueeze(0) # reshape to [B x 2 x 100 x 100]
+        #print(x.shape)
 
         x = self.pre_conv(x)
-        print(x.shape)
+        #print(x.shape)
 
         s1, _, _, s4 = x.shape
 
-        x = x.reshape(1, -1, s4)
-        print(x.shape)
+        x = x.reshape(s1, -1, s4)
+        #print(x.shape)
 
-        x = self.pooling(x)
-        print(x.shape)
-
+        x = self.mid(x)
+        #print(x.shape)
+        x *= self.f
+        
         x2 = self.post_conv(x)
-        print(x2.shape)
-
+        #print(x2.shape)
+        x2 *= self.f
+        
         return x, x2# pre, post
 
 
@@ -207,6 +284,7 @@ class CNNBS(nn.Module):
     """
     def __init__(self, input_len=100, n_heads=3, 
          channels=[100 * 4 * 2, 512, 256, 128, 64, 32, 16, 8],
+         b_maxout = False,
          pre_conv_channels=[2,2,4],
          pre_residuals=4, 
          up_residuals=0,
@@ -224,9 +302,10 @@ class CNNBS(nn.Module):
         #        break
         # print(len(channels))
         super(CNNBS, self).__init__()
+        self.n_heads = n_heads
         self.linear = nn.Linear(channels[-1], 1)
         self.act_fn = nn.LeakyReLU()#nn.Softsign()
-        self.heads = nn.ModuleList([HeadBS(channels, 
+        self.heads = nn.ModuleList([HeadBS(input_len, channels, b_maxout=b_maxout,
                 pre_conv_channels=pre_conv_channels, 
                 pre_residuals=pre_residuals, up_residuals=up_residuals,
                 post_residuals=post_residuals)
@@ -238,16 +317,22 @@ class CNNBS(nn.Module):
         if self.n_heads > 1:
             pre_list = []
             post_list = []
+            #print('Pass over Heads in parallel- start')
+
             for head in self.heads:
                 pre, post = head(x)
+
                 pre_list.append(pre)
                 post_list.append(post)
-            # Avrage Heads outputs
-            pre = torch.mean(torch.stack(pre_list), dim=0)
-            post = torch.mean(torch.stack(post_list), dim=0)
+                #print(head.f)
+            #print('Pass over Heads in parallel- end')
+            # Sum Heads outputs
+            pre = torch.sum(torch.stack(pre_list), dim=0)
+            post = torch.sum(torch.stack(post_list), dim=0)
         else:
             # Pass over Head
             pre, post = self.heads[0](x)
+            
         # Pre output
         rs0 = self.linear(pre.transpose(1, 2))
         rs0 = self.act_fn(rs0).squeeze(-1)
