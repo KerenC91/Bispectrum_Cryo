@@ -7,14 +7,14 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import argparse
 from utils import calculate_bispectrum_power_spectrum_efficient
-from model import CNNBS
+from model import CNNBS2, CNNBS1
 from hparams import hparams, hparams_debug_string
 import matplotlib.pyplot as plt
 import numpy as np
 from torch.autograd import Variable
 from torchvision import datasets, transforms
 
-DEBUG = False
+DEBUG = True
 
 class Trainer:
     def __init__(self, model, 
@@ -430,10 +430,13 @@ class Trainer:
             else:
                 train_loss, mse_loss, mse_norm_loss = train_loss
             if self.wandb_flag and self.epoch % self.wandb_log_interval == 0:
-                wandb.log({"train_loss": train_loss})
+                wandb.log({"train_loss_l1": train_loss})
                 if self.mode != 'opt':
                     wandb.log({"val_loss": val_loss})
                     #wandb.log({"test_loss": test_loss})
+                else:
+                    wandb.log({"mse": mse_loss})
+                    wandb.log({"relative mse": mse_norm_loss})
             if self.epoch % self.save_every == 0:
                 print(f'-------Epoch {self.epoch}/{self.num_epochs}-------')
                 print(f'Train loss: {train_loss:.6f}')
@@ -512,22 +515,31 @@ def main():
                         'False for 1 layer with output channel of 8 (default)')
     parser.add_argument('--normalize', type=bool, default=False, 
                         help='normalizing data for True, else False (default)')
+    parser.add_argument('--reduce_height', type=int, nargs='+', default=[4, 3, 3], 
+                        help='[count kernel stride] for reducing height in tensor: '
+                        'BXCXHXW to BXCX1XW')
     #evaluates to True if not provided, else False
     parser.add_argument('--early_stopping', type=int, default=100,  
                         help='early stopping after <early_stopping> times')  
-    
+    parser.add_argument('--model', type=int, default=1,  
+                        help='1 for CNNBS1 - reshape size to reduce dimension'
+                        ' 2 for CNNBS2 - strided convolution to reduce dimension')     
     
     # Parse arguments
     args = parser.parse_args()
 
     if DEBUG ==  True:
         args.N = 100
-        args.channels = [1600, 8]
-        args.pre_conv_channels = [2, 2, 4, 8]
-        args.pre_residuals = 5 
-        args.up_residuals = 4 
+        args.pre_conv_channels = [8, 32, 64]
+        args.pre_residuals = 1 
+        args.up_residuals = 1 
         args.post_residuals = 1
-        args.n_heads = 3
+        args.n_heads = 1
+        args.model = 2
+        if args.model == 2:
+            args.channels = [256, 64]
+        else:
+           args.channels = [256, 8] 
         print('WARNING!! DEBUG value is True!')
     # Set wandb flag
     wandb_flag = args.wandb
@@ -535,17 +547,31 @@ def main():
         wandb_flag = False
     
     # Initialize model and optimizer
-    model = CNNBS(
-        input_len=args.N,
-        n_heads=args.n_heads,
-        channels=args.channels,
-        b_maxout = args.maxout,
-        pre_conv_channels=args.pre_conv_channels,
-        pre_residuals=args.pre_residuals,
-        up_residuals=args.up_residuals,
-        post_residuals=args.post_residuals,
-        pow_2_channels=args.pow_2_channels
-        )
+    if args.model == 2:
+        model = CNNBS2(
+            input_len=args.N,
+            n_heads=args.n_heads,
+            channels=args.channels,
+            b_maxout = args.maxout,
+            pre_conv_channels=args.pre_conv_channels,
+            pre_residuals=args.pre_residuals,
+            up_residuals=args.up_residuals,
+            post_residuals=args.post_residuals,
+            pow_2_channels=args.pow_2_channels,
+            reduce_height=args.reduce_height
+            )
+    else:
+        model = CNNBS1(
+            input_len=args.N,
+            n_heads=args.n_heads,
+            channels=args.channels,
+            b_maxout = args.maxout,
+            pre_conv_channels=args.pre_conv_channels,
+            pre_residuals=args.pre_residuals,
+            up_residuals=args.up_residuals,
+            post_residuals=args.post_residuals,
+            pow_2_channels=args.pow_2_channels
+            )        
     # Get model summary as a string
     mid_layer ='maxout' if args.maxout == True else 'conv1'
     print(f'input length: {args.N}')
@@ -554,11 +580,13 @@ def main():
            f'channels={args.channels}\n'
            f'mid layer={mid_layer}\n'
            f'Normalize={args.normalize}\n'
+           f'pow_2_channels={args.pow_2_channels}\n'
           f'pre_conv_channels={args.pre_conv_channels}\n'
           f'pre_residuals={args.pre_residuals}\n'
           f'up_residuals={args.up_residuals}\n'
           f'post_residuals={args.post_residuals}\n'
-          f'early_stopping={args.early_stopping}')
+          f'early_stopping={args.early_stopping}'
+          f'reduce_height={args.reduce_height}')
     
     summary = str(model)
 
@@ -583,22 +611,12 @@ def main():
     if (wandb_flag):
         wandb.login()
         wandb.init(project='GaussianBispectrumInversion',
-                           name = f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}",
+                           name = f"{args.suffix}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}",
                            config=args)
         wandb.watch(model, log_freq=100)
     # Train and evaluate
     trainer.run()
     end_time = time.time()
-    # if args.mode == 'opt':
-    #     target = hparams.fixed_sample
-    #     source, target = trainer.create_rand_data(target)
-    #     # Move data to device
-    #     device = torch.device("cuda" if torch.cuda.is_available() else "cpu") 
-    #     target = target.to(device)
-    #     source = source.to(device)
-    #     # Forward pass
-    #     _, output = trainer.model(source)
-    #     trainer.plot_output_debug(target, output)
         
     print(f"Time taken to train in {os.path.basename(__file__)}:", 
           end_time - start_time, "seconds")
