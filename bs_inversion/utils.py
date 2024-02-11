@@ -1,6 +1,7 @@
 import torch
 import numpy as np
-
+import torch
+import torch.nn as nn
 
 def calculate_bispectrum_power_spectrum_efficient(x, dt=1.):
     """
@@ -70,3 +71,31 @@ def clculate_bispectrum_efficient(y, shifted=True):
         # Shift the Bispectrum to center
         Bx = torch.fft.fftshift(Bx)
     return Bx
+
+
+class BispectrumCalculator(nn.Module):
+    def __init__(self, batch_size, target_len, device):
+        super().__init__()
+        self.calculator = calculate_bispectrum_power_spectrum_efficient
+        self.batch_size = batch_size
+        self.target_len = target_len
+        self.device = device
+        
+    def _create_data(self, target):
+        # Create data
+        target = target.clone()
+        bs, ps, f = self.calculator(target)
+        bs_real = bs.real.float()
+        bs_imag = bs.imag.float()
+        source = torch.stack([bs_real, bs_imag], dim=1)
+        
+        return source, target.unsqueeze(0) 
+    # target: signal 1Xtarget_len
+    # source: bs     2Xtarget_lenXtarget_len
+    def forward(self, target):
+        # Iterate over the batch dimension using indexing
+        source = torch.zeros(self.batch_size, 2, self.target_len, self.target_len).to(self.device)
+
+        for i in range(self.batch_size):
+            source[i], target[i] = self._create_data(target[i])
+        return source, target  # Stack processed vectors

@@ -285,7 +285,7 @@ class HeadBS2(nn.Module):
             Tensor: B x C x (2^#channels * T) # 100X100X(2^#channels * 2)
         """
         #print(x.shape)
-        x = x.unsqueeze(0) # reshape to [B x 2 x 100 x 100]
+        #x = x.unsqueeze(0) # reshape to [B x 2 x 100 x 100]
         #print(x.shape)
 
         x = self.pre_conv(x)
@@ -376,11 +376,11 @@ class CNNBS2(nn.Module):
             
         # Pre output
         rs0 = self.linear(pre.transpose(1, 2))
-        rs0 = self.act_fn(rs0).squeeze(-1)
+        rs0 = self.act_fn(rs0).transpose(2, 1)
         
         # Post output - actually used
         rs1 = self.linear(post.transpose(1, 2))
-        rs1 = self.act_fn(rs1).squeeze(-1)
+        rs1 = self.act_fn(rs1).transpose(2, 1)
         
         return rs0, rs1 
 
@@ -462,7 +462,8 @@ class HeadBS1(nn.Module):
             Tensor: B x C x (2^#channels * T) # 100X100X(2^#channels * 2)
         """
         #print(x.shape)
-        x = x.unsqueeze(0) # reshape to [B x 2 x 100 x 100]
+        #x = x.unsqueeze(0) # reshape to [B x 2 x 100 x 100]
+        #print('start Head')
         #print(x.shape)
 
         x = self.pre_conv(x)
@@ -480,13 +481,11 @@ class HeadBS1(nn.Module):
         x2 = self.post_conv(x)
         #print(x2.shape)
         x2 *= self.f
+        #print('end Head')
         
         return x, x2# pre, post
         
-        
-        
-        
-        
+       
 class CNNBS1(nn.Module):
     """CNNBS1  - CNN for BS inversion - original one with reshape size in Head
 
@@ -502,18 +501,6 @@ class CNNBS1(nn.Module):
          up_residuals=0,
          post_residuals=12,
          pow_2_channels=False):
-        # channels=[]
-        # bs_channels = 2
-        # ch1= int(input_len * pre_conv_channels[-1] * bs_channels)
-        # channels.append(ch1)
-        # ch2 = int(np.sqrt(np.power(2, np.floor(np.log(ch1)/np.log(2)))))
-        # channels.append(ch2)
-        # while ch2/2. > 0:
-        #     ch2 /= 2.
-        #     channels.append(int(ch2))
-        #     if int(ch2) == 8:
-        #        break
-        # print(len(channels))
         super(CNNBS1, self).__init__()
         self.n_heads = n_heads
         self.linear = nn.Linear(channels[-1], 1)
@@ -526,6 +513,7 @@ class CNNBS1(nn.Module):
 
     def forward(self, x):
 
+        #print('start CNNBS')
         # Pass over Heads in "parallel"
         if self.n_heads > 1:
             pre_list = []
@@ -534,7 +522,7 @@ class CNNBS1(nn.Module):
 
             for head in self.heads:
                 pre, post = head(x)
-
+                
                 pre_list.append(pre)
                 post_list.append(post)
                 #print(head.f)
@@ -542,9 +530,11 @@ class CNNBS1(nn.Module):
             # Sum Heads outputs
             pre = torch.sum(torch.stack(pre_list), dim=0)
             post = torch.sum(torch.stack(post_list), dim=0)
+            #print(post.shape)
         else:
             # Pass over Head
             pre, post = self.heads[0](x)
+            #print(post.shape)
             
         # Pre output
         rs0 = self.linear(pre.transpose(1, 2))
@@ -552,6 +542,8 @@ class CNNBS1(nn.Module):
         
         # Post output - actually used
         rs1 = self.linear(post.transpose(1, 2))
-        rs1 = self.act_fn(rs1).squeeze(-1)
-        
+        #print(rs1.shape)
+        rs1 = self.act_fn(rs1).transpose(2, 1)
+        #print(rs1.shape)
+        #print('end CNNBS')
         return rs0, rs1 

@@ -13,8 +13,20 @@ hparams = HParams(
     dbg_draw_rate=100,
     loss_lim = 1e-6,
     #####################################
-    # Model parameters
+    # debug parameters
     #####################################
+    N = 100,
+    pre_conv_channels = [8, 32, 64],
+    pre_residuals = 1,
+    up_residuals = 1,
+    post_residuals = 1,
+    n_heads = 1,
+    model = 1,
+    mode = 'opt',
+    batch_size = 2,
+    loss_mode = 'all',
+    train_data_size = 10,
+    val_data_size = 1,
 #     n_heads = 1,
 #     pre_residuals = 10,
 #     up_residuals=0,
