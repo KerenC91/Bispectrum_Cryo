@@ -15,7 +15,7 @@ from torch.autograd import Variable
 from torchvision import datasets, transforms
 import sys
 
-DEBUG = True
+DEBUG = False
 # Set the same seed for reproducibility
 torch.manual_seed(1234)
 
