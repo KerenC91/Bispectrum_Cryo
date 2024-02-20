@@ -6,18 +6,21 @@ from datetime import datetime
 import torch 
 from torch.utils.data import Dataset, DataLoader
 import argparse
-from utils import BispectrumCalculator
-from model import CNNBS2, CNNBS1
-from hparams import hparams, hparams_debug_string
+from utils import BispectrumCalculator, read_csv_from_matlab
+from model1 import CNNBS, HeadBS1
+from model2 import HeadBS2
+from model3 import HeadBS3
+from hparams import hparams, hparams2, hparams3
 import matplotlib.pyplot as plt
 import numpy as np
 from torch.autograd import Variable
 from torchvision import datasets, transforms
 import sys
+import csv
+from torch import nn
 
-DEBUG = False
 # Set the same seed for reproducibility
-torch.manual_seed(1234)
+#torch.manual_seed(1234)
 
 class Trainer:
     def __init__(self, model, 
@@ -25,11 +28,12 @@ class Trainer:
                  val_loader, 
                  wandb_flag,
                  device,
+                 optimizer,
                  args):
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.batch_size = args.batch_size
-        self.num_epochs = args.epochs
+        self.epochs = args.epochs
         self.wandb_log_interval = args.wandb_log_interval
         self.train_data_size = args.train_data_size
         self.val_data_size = args.val_data_size
@@ -46,33 +50,41 @@ class Trainer:
         self.es_cnt = 0
         self.suffix = args.suffix
         self.n_heads = args.n_heads
-        self.optimizer = optim.Adam(self.model.parameters(), lr=args.lr)
+        self.optimizer = optimizer
+        self.read_baseline = args.read_baseline
+        self.dynamic_lr = args.dynamic_lr
+        self.scheduler = self._set_lr_scheduler()
         self.loss_mode = args.loss_mode
         if self.loss_mode == 'all':
             self.loss_f = self._loss_all
         else:
             self.loss_f = self._loss
-        if self.mode == 'opt':
-            self.batch_size = 1
-            self.train_data_size = 1
         self.bs_calc = BispectrumCalculator(self.batch_size, self.target_len, self.device).to(self.device)
-        # if self.mode == 'opt' or self.mode == 'rand':
-        #     self.target = torch.randn(self.train_data_size, 1, self.target_len)
-        #     self.target.to(self.device)
-        #     self.source, self.target = self.bs_calc(self.target)
-        #     if self.normalize == True:
-        #         mean = torch.mean(self.target)
-        #         std = torch.std(self.target)
-        #         self.target = (self.target - mean) / std
-        
+     
 
+    def _set_lr_scheduler(self):
+        scheduler = 'None'
+        if self.dynamic_lr != 'None':
+            self.lr_f = hparams.lr_f
+            if self.dynamic_lr == 'Manual':
+                self.epochs_lr_change = hparams.epochs_lr_change  
+            elif self.dynamic_lr == 'ReduceLROnPlateau':
+                scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                    optimizer=self.optimizer,
+                    mode=hparams.reduce_lr_mode,
+                    factor=hparams.reduce_lr_factor,
+                    threshold=hparams.reduce_lr_threshold,
+                    patience=hparams.reduce_lr_patience)
+            elif self.dynamic_lr == 'StepLR':
+                scheduler = optim.lr_scheduler.StepLR(
+                    optimizer=self.optimizer,
+                    step_size=hparams.step_lr_step_size,
+                    gamma=hparams.step_lr_gamma)
+        return scheduler
     
     def _loss(self, pred, target):
-        bs_pred, pred = self.bs_calc(pred)
-        if self.mode == 'opt':
-            bs_target = self.source
-        else:
-            bs_target, target = self.bs_calc(target)
+        bs_pred, _ = self.bs_calc(pred)
+        bs_target, _ = self.bs_calc(target)
         total_loss = 0.
         if hparams.f1 != 0:
             loss_sc = self._loss_sc(bs_pred, bs_target)
@@ -307,7 +319,7 @@ class Trainer:
         # Forward pass
         _, output = self.model(source) # reconstructed signal
         self.last_output = output
-        self.target = target
+        self.last_target = target
         # Loss calculation
         loss = self.loss_f(output, target)
         return loss
@@ -483,7 +495,7 @@ class Trainer:
         # Set the model to evaluation mode
         self.model.eval()
         
-        if self.mode == 'rand' or self.mode == 'opt':
+        if self.mode == 'opt':
             return 0
         else:
             avg_loss = self._run_epoch_validate()
@@ -494,7 +506,7 @@ class Trainer:
         return 0
                     
     def run(self):
-        for self.epoch in range(self.num_epochs):
+        for self.epoch in range(self.epochs):
             # train             
             train_loss = self.train()
             # validate
@@ -503,27 +515,48 @@ class Trainer:
             test_loss = self.test()
             if self.loss_mode == 'all':
                 train_loss, mse_loss, rel_mse_loss = train_loss
+            # update lr
+            
+            if self.dynamic_lr != 'None':
+                last_lr = self.optimizer.param_groups[0]['lr']
+                if self.dynamic_lr == 'Manual':
+                    if self.epoch in self.epochs_lr_change:
+                        self.optimizer.param_groups[0]['lr'] *= self.lr_f 
+                elif self.dynamic_lr == 'ReduceLROnPlateau':
+                    self.scheduler.step(train_loss)
+                elif self.dynamic_lr == 'StepLR':
+                    self.scheduler.step()
             # log loss with wandb
             if self.wandb_flag and self.epoch % self.wandb_log_interval == 0:
                 wandb.log({"train_loss_l1": train_loss})
                 wandb.log({"val_loss": val_loss})
                 wandb.log({"test_loss": test_loss})
+                wandb.log({"lr": self.optimizer.param_groups[0]['lr']})
                 if self.loss_mode == 'all':
                     wandb.log({"mse": mse_loss})
                     wandb.log({"relative mse": rel_mse_loss})
             # save checkpoint and log loss to cmd 
             if self.epoch % self.save_every == 0:
-                print(f'-------Epoch {self.epoch}/{self.num_epochs}-------')
+                print(f'-------Epoch {self.epoch}/{self.epochs}-------')
                 print(f'Train loss l1: {train_loss:.6f}')
                 print(f'Validation loss: {val_loss:.6f}')
                 if self.loss_mode == 'all':
                     print(f'mse loss: {mse_loss:.6f}')
                     print(f'relative mse loss: {rel_mse_loss:.6f}')
+                if self.dynamic_lr != 'None':
+                    print(f'lr: {last_lr}')
                 # save checkpoint
                 self._save_checkpoint(self.epoch)
             # plot last output
-            if self.epoch == self.num_epochs - 1:
-                self.plot_output_debug(self.target[0], self.last_output[0])
+            if self.epoch == self.epochs - 1:
+                self.plot_output_debug(self.last_target[0], self.last_output[0])
+                if self.read_baseline:
+                    with open(hparams.py_x_rec_file, "w", newline="") as csvfile:
+                        # Create a CSV writer object
+                        writer = csv.writer(csvfile)
+                    
+                        # Write the data to the file
+                        writer.writerows(self.last_output[0])
             # stop early if early_stopping is on
             if self.early_stopping != 0:
                 if self.last_loss < train_loss:
@@ -531,7 +564,7 @@ class Trainer:
                     if self.es_cnt == self.early_stopping:
                         print(f'Stooped at epoch {self.epoch}, after {self.es_cnt} times\n'
                               f'last_loss={self.last_loss}, curr_los={train_loss}')
-                        self.plot_output_debug(self.target, self.last_output)
+                        self.plot_output_debug(self.last_target[0], self.last_output[0])
                         return
             # stop if loss has reached lower bound
             if train_loss < hparams.loss_lim:
@@ -557,7 +590,15 @@ class UnitVecDataset(Dataset):
     
 def create_dataset(args, device, data_size):
     bs_calc = BispectrumCalculator(data_size, args.N, device).to(device)
-    target = torch.randn(data_size, 1, args.N)
+    if args.read_baseline:
+        if data_size == 1 and args.mode == 'opt':
+            target = read_csv_from_matlab(hparams.matlab_x_org_file)
+        else:
+            print('Error! read data from baseline mode is only possible for '
+                  'train data size 1. Please check your parameters.')
+            sys.exit(1)
+    else:
+        target = torch.randn(data_size, 1, args.N)
     target.to(device)
     source, target = bs_calc(target)
     
@@ -566,57 +607,59 @@ def create_dataset(args, device, data_size):
 
 def get_model(args):
     if args.model == 2:
-        model = CNNBS2(
-            input_len=args.N,
-            n_heads=args.n_heads,
-            channels=args.channels,
-            b_maxout = args.maxout,
-            pre_conv_channels=args.pre_conv_channels,
-            pre_residuals=args.pre_residuals,
-            up_residuals=args.up_residuals,
-            post_residuals=args.post_residuals,
-            pow_2_channels=args.pow_2_channels,
-            reduce_height=args.reduce_height
-            )
+        head_class = HeadBS2
+    elif args.model == 3:
+        head_class = HeadBS3     
     else:
-        model = CNNBS1(
-            input_len=args.N,
-            n_heads=args.n_heads,
-            channels=args.channels,
-            b_maxout = args.maxout,
-            pre_conv_channels=args.pre_conv_channels,
-            pre_residuals=args.pre_residuals,
-            up_residuals=args.up_residuals,
-            post_residuals=args.post_residuals,
-            pow_2_channels=args.pow_2_channels
-            )    
+        head_class = HeadBS1
+    
+    model = CNNBS(
+        input_len=args.N,
+        n_heads=args.n_heads,
+        channels=hparams.channels,
+        b_maxout = args.maxout,
+        pre_conv_channels=hparams.pre_conv_channels,
+        pre_residuals=hparams.pre_residuals,
+        up_residuals=hparams.up_residuals,
+        post_residuals=hparams.post_residuals,
+        pow_2_channels=args.pow_2_channels,
+        reduce_height=hparams.reduce_height,
+        head_class = head_class,
+        linear_ch=hparams.last_ch,
+        activation=nn.LeakyReLU()
+        )
     return model
 
 def set_debug_data(args):
-    args.N = hparams.N				
-    args.pre_conv_channels = hparams.pre_conv_channels
-    args.pre_residuals = hparams.pre_residuals
-    args.up_residuals = hparams.up_residuals
-    args.post_residuals = hparams.post_residuals
-    args.n_heads = hparams.n_heads
-    args.model = hparams.model
-    args.mode = hparams.mode
-    args.batch_size = hparams.batch_size
-    args.loss_mode = hparams.loss_mode
+    args.N = hparams.debug_N				
+    hparams.pre_conv_channels = hparams.debug_pre_conv_channels
+    hparams.pre_residuals = hparams.debug_pre_residuals
+    hparams.up_residuals = hparams.debug_up_residuals
+    hparams.post_residuals = hparams.debug_post_residuals
+    hparams.n_heads = hparams.debug_n_heads
+    args.model = hparams.debug_model
+    args.mode = hparams.debug_mode
+    args.batch_size = hparams.debug_batch_size
+    args.loss_mode = hparams.debug_loss_mode
     if args.model == 2:
-        args.channels = [256, 64]
+        hparams.channels = hparams.debug_channels_model2
+    elif args.model == 3:
+        hparams.channels = hparams.debug_channels_model3
     else:
-       args.channels = [256, 8] 
-    args.train_data_size = hparams.train_data_size
-    args.val_data_size = hparams.val_data_size
+       hparams.channels = hparams.debug_channels_model1
+    args.train_data_size = hparams.debug_train_data_size
+    args.val_data_size = hparams.debug_val_data_size
     print('WARNING!! DEBUG value is True!')
+    args.epochs = hparams.debug_epochs
+    hparams.last_ch = hparams.debug_last_ch
+    
     return args
     
     
 def prepare_data_loader(dataset, args):
     dataloader = None
     
-    if args.mode =='opt' or args.mode == 'rand':
+    if args.mode =='opt':
         dataloader = DataLoader(
         dataset,
         batch_size=args.batch_size,
@@ -631,50 +674,60 @@ def prepare_data_loader(dataset, args):
 def print_model_summary(args, model):
     # Get model summary as a string
     mid_layer ='maxout' if args.maxout == True else 'conv1'
-    print(f'input length: {args.N}\n'
-            f'model architecture:\n'
-            f'n_heads={args.n_heads}\n'
-            f'channels={args.channels}\n'
-            f'mid layer={mid_layer}\n'
-            f'Normalize={args.normalize}\n'
-            f'pow_2_channels={args.pow_2_channels}\n'
-            f'pre_conv_channels={args.pre_conv_channels}\n'
-            f'pre_residuals={args.pre_residuals}\n'
-            f'up_residuals={args.up_residuals}\n'
-            f'post_residuals={args.post_residuals}\n'
-            f'early_stopping={args.early_stopping}\n'
-            f'reduce_height={args.reduce_height}')
-    
-    summary = str(model)
-    
-    # Save summary to file
-    if not os.path.exists('models'):
-        os.makedirs('models')
-    with open(f'models/cnn_{args.suffix}.yml', "w") as f:
-        f.write(summary)
-    print(f'CNN arch yml: models/cnn_{args.suffix}.yml')
-    
-    
-    
+    print(f'mid_layer is {mid_layer}')
+    print(args)
+    print(hparams)
+
 def init(args):
     # Set wandb flag
     wandb_flag = args.wandb
     if (args.wandb_log_interval == 0):
         wandb_flag = False
-    if args.mode == 'opt':
-        args.train_data_size = 1
-        args.batch_size = 1
-        args.val_data_size = 1
     
     return args, wandb_flag
+
+def set_optimizer(args, model):
     
+    if args.optimizer == 'SGD':
+        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
+    elif args.optimizer == 'RMSProp':
+        optimizer = torch.optim.RMSProp(model.parameters(), lr=args.lr, 
+                                        alpha=hparams.opt_rms_prop_alpha,
+                                        eps=hparams.opt_rms_prop_eps)
+    elif args.optimizer == 'AdamW':
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr,
+                                      betas=hparams.opt_adam_w_betas,
+                                      eps=hparams.opt_adam_w_eps,
+                                      weight_decay=hparams.opt_adam_w_weight_decay)
+    else: # Adam
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr,
+                                      betas=hparams.opt_adam_betas,
+                                      eps=hparams.opt_adam_eps,
+                                      weight_decay=hparams.opt_adam_weight_decay)
+        
+    return optimizer
+    
+def update_suffix(args, debug):
+    if debug == True:
+        args.suffix += 'debug'
+    args.suffix += f'N{args.N}_bs_{args.batch_size}_ep{args.epochs}'\
+                    f'_tr_d_sz{args.train_data_size}_val_d_sz{args.val_data_size}'\
+                    f'_model{args.model}_{args.mode}_n_heads{args.n_heads}'\
+                    f'_loss_{args.loss_mode}_lr_{args.lr}'
+    if args.dynamic_lr != 'None':
+        args.suffix += f'_dynamic_lr_{args.dynamic_lr}'
+    if hparams.dilation_mid > 1:
+        args.suffix += f'_dilation_mid{hparams.dilation_mid}'
+    
+    return args
+            
 def main():
     # Add arguments to parser
     parser = argparse.ArgumentParser(description='Inverting the bispectrum. Pulse dataset')
 
     parser.add_argument('--N', type=int, default=10, metavar='N',
             help='size of vector in the dataset')
-    parser.add_argument('--batch_size', type=float, default=1, metavar='N',
+    parser.add_argument('--batch_size', type=int, default=1, metavar='N',
             help='batch size')
     parser.add_argument('--wandb_log_interval', type=int, default=10, metavar='N',
             help='interval to log data to wandb')
@@ -686,31 +739,27 @@ def main():
             help='the size of the train data') 
     parser.add_argument('--val_data_size', type=int, default=100, metavar='N',
             help='the size of the validate data')  
+    parser.add_argument('--optimizer', type=str, default='Adam',
+            help='\'SGD\', \'RMSprop \', \'AdamW\'. '
+            'Update configurtion parametes accordingly. '
+            'default: \'Adam\'') 
+    parser.add_argument('--dynamic_lr', type=str, default='None',
+            help='\'StepLR\', \'ReduceLROnPlateau\', \'Manual\'. '
+            'Update configurtion parametes accordingly. '
+            'default: \'None\' - no change in lr') 
     parser.add_argument('--lr', type=float, default=1e-3, metavar='f',
-            help='the size of the test data')  
+            help='learning rate (initial for dynamic lr, otherwise fixed)')  
     parser.add_argument('--mode', type=str, default='opt',
             help='\'rand\': Create random data during training if True.'
-                    '\'opt\': Optimize on a single input.')  
-    parser.add_argument('--suffix', type=str, default='debug',
+                    '\'opt\': Optimize on predefined data')  
+    parser.add_argument('--suffix', type=str, default='',
             help='suffix to add to the name of the cnn yml file')  
+    parser.add_argument('--config_mode', type=int, default=0, 
+            help='0 for hparams, 2 for hparams2, 3 for hparams3') 
 
     ##---- model parameters
     parser.add_argument('--n_heads', type=int, default=1, 
-                        help='number of cnn heads')
-    parser.add_argument('--channels', type=int, nargs='+', 
-                        default=[80, 64, 32, 16, 8], 
-                        help='layer_channels list of values on each of heads')
-    parser.add_argument('--pre_conv_channels', type=int, nargs='+', 
-                        default=[2,2,4], 
-                        help='layer_channels list of values on each of heads')
-    parser.add_argument('--pre_residuals', type=int, default=4, 
-                        help='number of cnn heads')
-    parser.add_argument('--up_residuals', type=int, default=0, 
-                        help='number of cnn heads')
-    parser.add_argument('--post_residuals', type=int, default=12, 
-                        help='number of cnn heads')
-    parser.add_argument('--early_stopping', type=int, default=100,  
-                        help='early stopping after <early_stopping> times')  
+                    help='number of cnn heads')
     parser.add_argument('--model', type=int, default=1,  
                         help='1 for CNNBS1 - reshape size to reduce dimension'
                         ' 2 for CNNBS2 - strided convolution to reduce dimension')
@@ -723,7 +772,10 @@ def main():
                         'Note: the training loss is always l1') 
     #evaluates to False if not provided, else True
     parser.add_argument('--wandb', action='store_true', 
-                        help='Log data using wandb')    
+                        help='Log data using wandb') 
+    parser.add_argument('--read_baseline', action='store_true', 
+                        help='for batch_size of 1, train on the example used in the baseline'
+                        'HeterogenousMRA, compare the results in the end.')
     parser.add_argument('--maxout', action='store_true', 
                         help='True for maxout in middle layer, False for conv1 (default)')
     parser.add_argument('--pow_2_channels', action='store_true', 
@@ -731,16 +783,24 @@ def main():
                         'False for 1 layer with output channel of 8 (default)')
     parser.add_argument('--normalize', action='store_true',
                         help='normalizing data for True, else False (default)')
+    parser.add_argument('--early_stopping', action='store_true', 
+                        help='early stopping after early_stopping times. '
+                        'Update early_stopping in configuration') 
+
     
     # Parse arguments
     args = parser.parse_args()
+    #hparams = set_hparams(args.config_mode)
+    DEBUG = hparams.DEBUG
 
     if DEBUG ==  True:
         args = set_debug_data(args)
 
+    args = update_suffix(args, DEBUG)
     args, wandb_flag = init(args)
     # Initialize model and optimizer
     model = get_model(args)
+    optimizer = set_optimizer(args, model)
     # print and save model
     print_model_summary(args, model)
     # set device
@@ -757,15 +817,19 @@ def main():
                       val_loader=val_loader, 
                       wandb_flag=wandb_flag,
                       device=device,
+                      optimizer=optimizer,
                       args=args)
     
     start_time = time.time()
     if (wandb_flag):
         wandb.login()
-        wandb.init(project='GaussianBispectrumInversion',
-                           name = f"{args.suffix}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}",
+        run = wandb.init(project='GaussianBispectrumInversion',
+                           name = f"{args.suffix}",
                            config=args)
         wandb.log({"cmd_line": sys.argv})
+        wandb.save('hparams.py')
+        wandb.save("train_main.py")
+        wandb.save(f"model{args.model}.py")        
         wandb.watch(model, log_freq=100)
     # Train and evaluate
     trainer.run()

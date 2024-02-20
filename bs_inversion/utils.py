@@ -59,6 +59,11 @@ def perform_positional_encoding(x, d_model):
     
     return stacked_tensor   
 
+def read_csv_from_matlab(file):
+    x = np.loadtxt(file, delimiter=" ")
+    x = torch.tensor(x).unsqueeze(0).unsqueeze(0)
+    return x
+
 def calculate_bispectrum_power_spectrum_efficient(x, dt=1.):
     """
     
