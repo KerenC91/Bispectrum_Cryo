@@ -49,7 +49,7 @@ optuna_params = OptParams(
     ##########################
     last_ch = 8, # for all models: 8
     dilation_mid = 1,
-    channels = [256, 64], # for model1: [256, 8], for model2: [256, 64]  
+    #channels = [256, 64], # for model1: [256, 8], for model2: [256, 64]  
                         # layer_channels list of values on each of heads
     linear_ch = 8, # for model1: channels[-1], for model2: 8, 
     pre_conv_channels = [8, 32, 64], 

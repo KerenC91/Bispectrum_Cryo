@@ -29,6 +29,8 @@ class Trainer:
                  wandb_flag,
                  device,
                  optimizer,
+                 scheduler,
+                 scheduler_name,
                  args):
         self.train_loader = train_loader
         self.val_loader = val_loader
@@ -52,8 +54,8 @@ class Trainer:
         self.n_heads = args.n_heads
         self.optimizer = optimizer
         self.read_baseline = args.read_baseline
-        self.dynamic_lr = args.dynamic_lr
-        self.scheduler = self._set_lr_scheduler()
+        self.scheduler = scheduler
+        self.scheduler_name = scheduler_name
         self.loss_mode = args.loss_mode
         if self.loss_mode == 'all':
             self.loss_f = self._loss_all
@@ -61,26 +63,6 @@ class Trainer:
             self.loss_f = self._loss
         self.bs_calc = BispectrumCalculator(self.batch_size, self.target_len, self.device).to(self.device)
      
-
-    def _set_lr_scheduler(self):
-        scheduler = 'None'
-        if self.dynamic_lr != 'None':
-            self.lr_f = hparams.lr_f
-            if self.dynamic_lr == 'Manual':
-                self.epochs_lr_change = hparams.epochs_lr_change  
-            elif self.dynamic_lr == 'ReduceLROnPlateau':
-                scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-                    optimizer=self.optimizer,
-                    mode=hparams.reduce_lr_mode,
-                    factor=hparams.reduce_lr_factor,
-                    threshold=hparams.reduce_lr_threshold,
-                    patience=hparams.reduce_lr_patience)
-            elif self.dynamic_lr == 'StepLR':
-                scheduler = optim.lr_scheduler.StepLR(
-                    optimizer=self.optimizer,
-                    step_size=hparams.step_lr_step_size,
-                    gamma=hparams.step_lr_gamma)
-        return scheduler
     
     def _loss(self, pred, target):
         bs_pred, _ = self.bs_calc(pred)
@@ -517,14 +499,14 @@ class Trainer:
                 train_loss, mse_loss, rel_mse_loss = train_loss
             # update lr
             
-            if self.dynamic_lr != 'None':
+            if self.scheduler_name != 'None':
                 last_lr = self.optimizer.param_groups[0]['lr']
-                if self.dynamic_lr == 'Manual':
-                    if self.epoch in self.epochs_lr_change:
-                        self.optimizer.param_groups[0]['lr'] *= self.lr_f 
-                elif self.dynamic_lr == 'ReduceLROnPlateau':
+                if self.scheduler_name == 'Manual':
+                    if self.epoch in hparams.manual_epochs_lr_change:
+                        self.optimizer.param_groups[0]['lr'] *= hparams.manual_lr_f 
+                elif self.scheduler_name == 'ReduceLROnPlateau':
                     self.scheduler.step(train_loss)
-                elif self.dynamic_lr == 'StepLR':
+                elif self.scheduler_name == 'StepLR':
                     self.scheduler.step()
             # log loss with wandb
             if self.wandb_flag and self.epoch % self.wandb_log_interval == 0:
@@ -543,7 +525,7 @@ class Trainer:
                 if self.loss_mode == 'all':
                     print(f'mse loss: {mse_loss:.6f}')
                     print(f'relative mse loss: {rel_mse_loss:.6f}')
-                if self.dynamic_lr != 'None':
+                if self.scheduler_name != 'None':
                     print(f'lr: {last_lr}')
                 # save checkpoint
                 self._save_checkpoint(self.epoch)
@@ -605,18 +587,42 @@ def create_dataset(args, device, data_size):
     dataset = UnitVecDataset(source, target)
     return dataset
 
+def set_activation(activation_name):
+    #['ELU', 'LeakyReLU', 'ReLU', 'Softsign', 'Tanh'])
+   
+    if activation_name == 'ELU':
+        activation = nn.ELU()
+    elif activation_name == 'ReLU':
+        activation = nn.ReLU()
+    elif activation_name == 'Softsign':
+        activation = nn.Softsign()
+    elif activation_name == 'Tanh':
+        activation = nn.Tanh()  
+    else: #'LeakyReLU':
+        activation = nn.LeakyReLU()
+        
+    return activation
+        
 def get_model(args):
     if args.model == 2:
         head_class = HeadBS2
+        channels = hparams.channels_model2
     elif args.model == 3:
-        head_class = HeadBS3     
+        head_class = HeadBS3 
+        channels = hparams.channels_model3
     else:
         head_class = HeadBS1
-    
+        channels = hparams.channels_model1
+ 
+
+    hparams.pre_conv_channels[-1] = hparams.last_ch
+    channels[-1] = hparams.last_ch
+        
+    activation = set_activation(hparams.activation)
     model = CNNBS(
         input_len=args.N,
         n_heads=args.n_heads,
-        channels=hparams.channels,
+        channels=channels,
         b_maxout = args.maxout,
         pre_conv_channels=hparams.pre_conv_channels,
         pre_residuals=hparams.pre_residuals,
@@ -626,7 +632,7 @@ def get_model(args):
         reduce_height=hparams.reduce_height,
         head_class = head_class,
         linear_ch=hparams.last_ch,
-        activation=nn.LeakyReLU()
+        activation=activation
         )
     return model
 
@@ -684,20 +690,22 @@ def init(args):
     if (args.wandb_log_interval == 0):
         wandb_flag = False
     
-    return args, wandb_flag
+    return wandb_flag
 
 def set_optimizer(args, model):
     
     if args.optimizer == 'SGD':
-        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
+        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr,
+                                    momentum=hparams.opt_sgd_momentum,
+                                    weight_decay=hparams.opt_sgd_weight_decay)
     elif args.optimizer == 'RMSProp':
         optimizer = torch.optim.RMSProp(model.parameters(), lr=args.lr, 
                                         alpha=hparams.opt_rms_prop_alpha,
-                                        eps=hparams.opt_rms_prop_eps)
+                                        eps=hparams.opt_eps)
     elif args.optimizer == 'AdamW':
         optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr,
                                       betas=hparams.opt_adam_w_betas,
-                                      eps=hparams.opt_adam_w_eps,
+                                      eps=hparams.opt_eps,
                                       weight_decay=hparams.opt_adam_w_weight_decay)
     else: # Adam
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr,
@@ -706,6 +714,34 @@ def set_optimizer(args, model):
                                       weight_decay=hparams.opt_adam_weight_decay)
         
     return optimizer
+
+
+def set_scheduler(scheduler_name, optimizer, epochs):
+    scheduler = None
+    if scheduler_name != 'None':
+        if scheduler_name == 'ReduceLROnPlateau':
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer=optimizer,
+                mode='min',
+                factor=hparams.reduce_lr_factor,
+                threshold=hparams.reduce_lr_threshold,
+                patience=hparams.reduce_lr_patience,
+                cool_down=hparams.reduce_lr_cool_down)
+        elif scheduler_name == 'StepLR':
+            scheduler = optim.lr_scheduler.StepLR(
+                optimizer=optimizer,
+                step_size=hparams.step_lr_step_size,
+                gamma=hparams.step_lr_gamma)
+        elif scheduler_name == 'OneCycleLR':
+            scheduler = optim.lr_scheduler.OneCycleLR(
+                optimizer=optimizer,
+                max_lr = hparams.cyc_lr_max_lr,
+                steps_per_epoch =1,
+                epochs= epochs,
+                pct_start = hparams.cyc_lr_pct_start,
+                anneal_strategy=hparams.cyc_lr_anneal_strategy)                
+    return scheduler
+
     
 def update_suffix(args, debug):
     if debug == True:
@@ -714,8 +750,8 @@ def update_suffix(args, debug):
                     f'_tr_d_sz{args.train_data_size}_val_d_sz{args.val_data_size}'\
                     f'_model{args.model}_{args.mode}_n_heads{args.n_heads}'\
                     f'_loss_{args.loss_mode}_lr_{args.lr}'
-    if args.dynamic_lr != 'None':
-        args.suffix += f'_dynamic_lr_{args.dynamic_lr}'
+    if args.scheduler != 'None':
+        args.suffix += f'_dynamic_lr_{args.scheduler}'
     if hparams.dilation_mid > 1:
         args.suffix += f'_dilation_mid{hparams.dilation_mid}'
     
@@ -739,11 +775,7 @@ def main():
             help='the size of the train data') 
     parser.add_argument('--val_data_size', type=int, default=100, metavar='N',
             help='the size of the validate data')  
-    parser.add_argument('--optimizer', type=str, default='Adam',
-            help='\'SGD\', \'RMSprop \', \'AdamW\'. '
-            'Update configurtion parametes accordingly. '
-            'default: \'Adam\'') 
-    parser.add_argument('--dynamic_lr', type=str, default='None',
+    parser.add_argument('--scheduler', type=str, default='None',
             help='\'StepLR\', \'ReduceLROnPlateau\', \'Manual\'. '
             'Update configurtion parametes accordingly. '
             'default: \'None\' - no change in lr') 
@@ -786,8 +818,12 @@ def main():
     parser.add_argument('--early_stopping', action='store_true', 
                         help='early stopping after early_stopping times. '
                         'Update early_stopping in configuration') 
-
+    parser.add_argument('--optimizer', type=str, default="Adam",  
+                        help='The options are \"Adam\"\, \"SGD\"\, \"RMSprop\"\, \"AdamW\"\n'
+                        'Please update relevant parameters in parameters file.') 
     
+    # set device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # Parse arguments
     args = parser.parse_args()
     #hparams = set_hparams(args.config_mode)
@@ -797,14 +833,14 @@ def main():
         args = set_debug_data(args)
 
     args = update_suffix(args, DEBUG)
-    args, wandb_flag = init(args)
+    wandb_flag = init(args)
     # Initialize model and optimizer
     model = get_model(args)
     optimizer = set_optimizer(args, model)
+    scheduler = set_scheduler(args.scheduler, optimizer, args.epochs)
     # print and save model
     print_model_summary(args, model)
-    # set device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     # set train dataset and dataloader
     train_dataset = create_dataset(args, device, args.train_data_size)
     train_loader = prepare_data_loader(train_dataset, args)
@@ -818,6 +854,8 @@ def main():
                       wandb_flag=wandb_flag,
                       device=device,
                       optimizer=optimizer,
+                      scheduler=scheduler,
+                      scheduler_name=args.scheduler,
                       args=args)
     
     start_time = time.time()

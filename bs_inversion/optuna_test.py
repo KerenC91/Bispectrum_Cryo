@@ -209,7 +209,8 @@ def try_optimizer(trial, model):
                                         alpha=alpha,
                                         eps=eps)
     elif optimizer_name == "SGD":
-        optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum)
+        optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum,
+                              weight_decay=weight_decay)
     elif optimizer_name == 'AdamW':
         optimizer = optim.AdamW(model.parameters(), lr=learning_rate,
                                       betas=(beta1, beta2),
@@ -223,7 +224,7 @@ def objective(trial: Trial, epochs):
 
     # set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    wandb_flag = False
+
     # Initialize model and optimizer
     model = try_model(trial)
     model.to(device)
