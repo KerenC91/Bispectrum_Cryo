@@ -232,27 +232,29 @@ def test_vectorize():
     transformed_tensor = \
         x.apply_(lambda v: duplicate_and_expand(v.squeeze(1), d_model))
      
-def read_from_matlab(file):
+def read_tensor_from_matlab(file):
     x = np.loadtxt(file, delimiter=" ")
     x = torch.tensor(x).unsqueeze(1).unsqueeze(0)
     return x
 
-def test_read_from_matlab():
-    folder = 'data_from_matlab'
-    sub_folder = 'sample1'
+def read_test_from_matlab(test_i=1,
+                          folder='/scratch/home/kerencohen2/Git/HeterogeneousMRA/baseline_test'):
+    sub_folder = f'test_{test_i}'
     home_folder = os.path.join(folder, sub_folder)
-    x_org_file = os.path.join(home_folder, 'x_true.csv')
-    x_rec_file = os.path.join(home_folder, 'x_est.csv')
     
-    x_org = np.loadtxt(x_org_file, delimiter=" ")
-    x_org = torch.tensor(x_org).unsqueeze(1).unsqueeze(0)
-    x_rec = np.loadtxt(x_rec_file, delimiter=" ")
-    
-    print('done')
+    x_true = read_tensor_from_matlab(os.path.join(home_folder, 'x_true.csv'))
+    data = read_tensor_from_matlab(os.path.join(home_folder, 'data.csv'))
+    shifts = float(np.loadtxt(os.path.join(home_folder, 'shifts.csv'), delimiter=" "))
+    x_est = read_tensor_from_matlab(os.path.join(home_folder, 'x_est.csv'))
+    p_est = float(np.loadtxt(os.path.join(home_folder, 'p_est.csv'), delimiter=" "))
+    rel_error_X = float(np.loadtxt(os.path.join(home_folder, 'rel_error_X.csv'), delimiter=" "))
+    tv_error_p = float(np.loadtxt(os.path.join(home_folder, 'tv_error_p.csv'), delimiter=" "))
+
+    return x_true, data, shifts, x_est, p_est, rel_error_X, tv_error_p
 
 if __name__ == "__main__":
 
-    test_read_from_matlab()
+    read_test_from_matlab()
     #test_VectorProcessor()
     #test_strided_conv_height()
     #test_type = 2
