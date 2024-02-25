@@ -2,23 +2,21 @@ import torch.optim as optim
 import time 
 import os
 import wandb
-from datetime import datetime
 import torch 
 from torch.utils.data import Dataset, DataLoader
 import argparse
-from utils import BispectrumCalculator, read_csv_from_matlab
+from utils import BispectrumCalculator
 from model1 import CNNBS, HeadBS1
 from model2 import HeadBS2
 from model3 import HeadBS3
-from hparams import hparams, hparams2, hparams3
+from hparams import hparams
 import matplotlib.pyplot as plt
 import numpy as np
-from torch.autograd import Variable
-from torchvision import datasets, transforms
-import sys
-import csv
-from torch import nn
 
+import sys
+
+from torch import nn
+from compare_to_baseline import read_tensor_from_matlab
 # Set the same seed for reproducibility
 #torch.manual_seed(1234)
 
@@ -26,14 +24,19 @@ class Trainer:
     def __init__(self, model, 
                  train_loader, 
                  val_loader, 
+                 train_dataset,
+                 val_dataset,
                  wandb_flag,
                  device,
                  optimizer,
                  scheduler,
                  scheduler_name,
+                 comp_baseline_folders,
                  args):
         self.train_loader = train_loader
         self.val_loader = val_loader
+        self.train_dataset=train_dataset
+        self.val_dataset=val_dataset
         self.batch_size = args.batch_size
         self.epochs = args.epochs
         self.wandb_log_interval = args.wandb_log_interval
@@ -62,7 +65,8 @@ class Trainer:
         else:
             self.loss_f = self._loss
         self.bs_calc = BispectrumCalculator(self.batch_size, self.target_len, self.device).to(self.device)
-     
+        self.folder_test, self.folder_matlab, self.folder_python = \
+                        comp_baseline_folders
     
     def _loss(self, pred, target):
         bs_pred, _ = self.bs_calc(pred)
@@ -328,17 +332,21 @@ class Trainer:
         loss = self._loss(output, target)
         return loss
 
-    def plot_output_debug(self, target, output):
-        folder = f'figures/cnn_{self.suffix}'
+    def plot_output_debug(self, target, output, folder, from_matlab=None):
         if not os.path.exists(folder):
             os.makedirs(folder)
+        fig_path = f'{folder}/x_vs_x_rec.png'     
+      
         plt.figure()
-        plt.xlabel("time [sec]")
-        plt.title('1D signal')
-        plt.plot(target.squeeze(0).detach().cpu().numpy(), label='x')
-        plt.plot(output.squeeze(0).detach().cpu().numpy(), label='x_rec')
+        plt.title('Comparison between original signal and its reconstructions')
+        plt.plot(target, label='org')
+        plt.plot(output, label='tested')
+        if from_matlab is not None:
+            plt.plot(from_matlab, label='baseline')
+        plt.ylabel('signal')
+        plt.xlabel('time')
         plt.legend()
-        plt.savefig(f'{folder}/x_vs_x_rec_ep{self.epoch}.png')
+        plt.savefig(fig_path)        
         plt.close()
    
     def _save_checkpoint(self, epoch):
@@ -393,7 +401,26 @@ class Trainer:
 
         return avg_loss, avg_mse_loss, avg_mse_norm_loss        
 
+    def _run_epoch_validate_losses_all(self):   
+        total_loss = 0
+        total_mse_loss = 0
+        total_mse_norm_loss = 0
+        
+        for idx, (sources, targets) in self.train_loader:
+            # forward pass + loss computation
+            loss, mse_loss, rel_mse_loss = self._run_batch(sources, targets)
+            # update avg loss 
+            total_loss += loss.item()
+            total_mse_loss += mse_loss.item()
+            total_mse_norm_loss += rel_mse_loss.item()
+            
+        avg_loss = total_loss / len(self.val_loader)
+        avg_mse_loss = total_mse_loss / len(self.val_loader) 
+        avg_mse_norm_loss = total_mse_norm_loss / len(self.val_loader) 
 
+        return avg_loss, avg_mse_loss, avg_mse_norm_loss 
+    
+    
     def _run_epoch_train_rand(self):
         total_loss = 0
         total_mse_loss = 0
@@ -438,7 +465,7 @@ class Trainer:
                 # update avg loss 
                 total_loss += loss.item()
             
-        avg_loss = total_loss / self.val_data_size
+        avg_loss = total_loss / len(self.val_loader)
             
         return avg_loss
     
@@ -477,16 +504,59 @@ class Trainer:
         # Set the model to evaluation mode
         self.model.eval()
         
-        if self.mode == 'opt':
-            return 0
+        if self.loss_mode == 'all':
+            avg_loss = self._run_epoch_validate_losses_all()
         else:
             avg_loss = self._run_epoch_validate()
+            
         return avg_loss
 
     # one epoch of testing 
     def test(self):
         return 0
-                    
+    def write_python_test_results(self, dataset):#changedataloader
+        dataloader = DataLoader(
+                            dataset,
+                            batch_size=1,
+                            pin_memory=False,
+                            shuffle=False
+                        )
+        for idx, (source, target) in dataloader:
+            # Move data to device
+            target = target.to(self.device)
+            source = source.to(self.device)
+            # Forward pass
+            _, output = self.model(source) # reconstructed signal
+            self.save_python_test_data(idx.item(), output, target)
+            
+    def save_python_test_data(self, i, x_est, x_true):
+        folder = os.path.join(self.folder_python, f'sample{i}')
+        if not os.path.exists(folder):
+            os.mkdir(folder)
+            
+        rel_error_X = self._loss_rel_MSE(x_est, x_true).item()
+        rel_error_X_path = os.path.join(folder, 'rel_error_X.csv')
+        np.savetxt(rel_error_X_path, [rel_error_X])
+        
+        x_est_path = os.path.join(folder, 'x_est.csv')
+        np.savetxt(x_est_path, 
+                   x_est.squeeze(0).squeeze(0).cpu().detach().numpy())
+        
+        x_true_path = os.path.join(folder, 'x_true.csv')
+        np.savetxt(x_true_path, 
+                   x_true.squeeze(0).squeeze(0).cpu().detach().numpy())
+        
+        #read from matlab
+        folder_m = os.path.join(self.folder_matlab, f'sample{i}')
+        file_path = os.path.join(folder_m, 'x_est.csv')
+        x_est_m = np.loadtxt(file_path, delimiter=" ")
+        #save figure
+        self.plot_output_debug(x_true.squeeze(0).squeeze(0).cpu().detach().numpy(), 
+                               x_est.squeeze(0).squeeze(0).cpu().detach().numpy(),
+                               folder,
+                               x_est_m)
+
+        
     def run(self):
         for self.epoch in range(self.epochs):
             # train             
@@ -496,7 +566,8 @@ class Trainer:
             # test
             test_loss = self.test()
             if self.loss_mode == 'all':
-                train_loss, mse_loss, rel_mse_loss = train_loss
+                train_loss, train_mse_loss, train_rel_mse_loss = train_loss
+                val_loss, val_mse_loss, val_rel_mse_loss = val_loss
             # update lr
             
             if self.scheduler_name != 'None':
@@ -511,34 +582,45 @@ class Trainer:
             # log loss with wandb
             if self.wandb_flag and self.epoch % self.wandb_log_interval == 0:
                 wandb.log({"train_loss_l1": train_loss})
-                wandb.log({"val_loss": val_loss})
+                wandb.log({"val_loss_l1": val_loss})
                 wandb.log({"test_loss": test_loss})
                 wandb.log({"lr": self.optimizer.param_groups[0]['lr']})
                 if self.loss_mode == 'all':
-                    wandb.log({"mse": mse_loss})
-                    wandb.log({"relative mse": rel_mse_loss})
+                    wandb.log({"train mse": train_mse_loss})
+                    wandb.log({"train relative mse": train_rel_mse_loss})
+                    wandb.log({"val mse": val_mse_loss})
+                    wandb.log({"val relative mse": val_rel_mse_loss})
             # save checkpoint and log loss to cmd 
             if self.epoch % self.save_every == 0:
                 print(f'-------Epoch {self.epoch}/{self.epochs}-------')
                 print(f'Train loss l1: {train_loss:.6f}')
-                print(f'Validation loss: {val_loss:.6f}')
+                print(f'Validation loss l1: {val_loss:.6f}')
                 if self.loss_mode == 'all':
-                    print(f'mse loss: {mse_loss:.6f}')
-                    print(f'relative mse loss: {rel_mse_loss:.6f}')
+                    print(f'train mse loss: {train_mse_loss:.6f}')
+                    print(f'train relative mse loss: {train_rel_mse_loss:.6f}')
+                    print(f'val mse loss: {val_mse_loss:.6f}')
+                    print(f'val relative mse loss: {val_rel_mse_loss:.6f}')
                 if self.scheduler_name != 'None':
                     print(f'lr: {last_lr}')
                 # save checkpoint
                 self._save_checkpoint(self.epoch)
             # plot last output
             if self.epoch == self.epochs - 1:
-                self.plot_output_debug(self.last_target[0], self.last_output[0])
-                if self.read_baseline:
-                    with open(hparams.py_x_rec_file, "w", newline="") as csvfile:
-                        # Create a CSV writer object
-                        writer = csv.writer(csvfile)
+                folder = f'figures/cnn_{self.suffix}'
+                self.plot_output_debug(self.last_target[0].squeeze(0).detach().cpu().numpy(), 
+                                       self.last_output[0].squeeze(0).detach().cpu().numpy(),
+                                       folder)
+                if self.read_baseline != 0:
+                    if self.read_baseline == 1: # train
+                        self.write_python_test_results(self.train_dataset)
+                    elif self.read_baseline == 2:
+                        self.write_python_test_results(self.val_dataset)
+                    # with open(hparams.py_x_rec_file, "w", newline="") as csvfile:
+                    #     # Create a CSV writer object
+                    #     writer = csv.writer(csvfile)
                     
-                        # Write the data to the file
-                        writer.writerows(self.last_output[0])
+                    #     # Write the data to the file
+                    #     writer.writerows(self.last_output[0])
             # stop early if early_stopping is on
             if self.early_stopping != 0:
                 if self.last_loss < train_loss:
@@ -546,7 +628,10 @@ class Trainer:
                     if self.es_cnt == self.early_stopping:
                         print(f'Stooped at epoch {self.epoch}, after {self.es_cnt} times\n'
                               f'last_loss={self.last_loss}, curr_los={train_loss}')
-                        self.plot_output_debug(self.last_target[0], self.last_output[0])
+                        folder = f'figures/cnn_{self.suffix}'
+                        self.plot_output_debug(self.last_target[0].squeeze(0).detach().cpu().numpy(),
+                                               self.last_output[0].squeeze(0).detach().cpu().numpy(), 
+                                               folder)
                         return
             # stop if loss has reached lower bound
             if train_loss < hparams.loss_lim:
@@ -570,17 +655,28 @@ class UnitVecDataset(Dataset):
 
         return idx, (self.source[idx], self.target[idx])
     
-def create_dataset(args, device, data_size):
-    bs_calc = BispectrumCalculator(data_size, args.N, device).to(device)
-    if args.read_baseline:
-        if data_size == 1 and args.mode == 'opt':
-            target = read_csv_from_matlab(hparams.matlab_x_org_file)
+def create_dataset(device, data_size, N, read_baseline, mode, 
+                   comp_baseline_folders):
+    bs_calc = BispectrumCalculator(data_size, N, device).to(device)
+    if read_baseline:
+        target = torch.zeros(data_size, 1, N)
+        if mode == 'opt':
+            _, folder_matlab, _ = \
+                    comp_baseline_folders
+            data_size = min(data_size, len(os.listdir(folder_matlab)))
+            print(f'data_size={data_size}')
+
+            for i in range(data_size):
+
+                folder = os.path.join(folder_matlab, f'sample{i}')
+                sample_path = os.path.join(folder, 'x_true.csv')
+                target[i] = read_tensor_from_matlab(sample_path, True)              
         else:
             print('Error! read data from baseline mode is only possible for '
-                  'train data size 1. Please check your parameters.')
+                  '\'opt\' mode. Please check your parameters.')
             sys.exit(1)
     else:
-        target = torch.randn(data_size, 1, args.N)
+        target = torch.randn(data_size, 1, N)
     target.to(device)
     source, target = bs_calc(target)
     
@@ -658,6 +754,7 @@ def set_debug_data(args):
     print('WARNING!! DEBUG value is True!')
     args.epochs = hparams.debug_epochs
     hparams.last_ch = hparams.debug_last_ch
+    args.read_baseline = 1
     
     return args
     
@@ -689,8 +786,25 @@ def init(args):
     wandb_flag = args.wandb
     if (args.wandb_log_interval == 0):
         wandb_flag = False
+    if args.read_baseline:
+        folder_test = os.path.join(hparams.comp_root, args.comp_test_name)
+        if not os.path.exists(folder_test):
+            os.mkdir(folder_test)
+        folder_testm = os.path.join(hparams.comp_root, hparams.comp_test_name)
+        if not os.path.exists(folder_testm):
+            print('Error! folder_testm does not exist\n'
+                  f'path={folder_testm}')    
+            exit(1)
+        folder_matlab = os.path.join(folder_testm, 'data_from_matlab')
+        if not os.path.exists(folder_testm):
+            print('Error! folder_matlab does not exist\n'
+                  f'path={folder_matlab}') 
+            exit(1)
+        folder_python = os.path.join(folder_test, 'data_from_python')
+        if not os.path.exists(folder_python):
+            os.mkdir(folder_python)
     
-    return wandb_flag
+    return wandb_flag, (folder_test, folder_matlab, folder_python)
 
 def set_optimizer(args, model):
     
@@ -746,7 +860,8 @@ def set_scheduler(scheduler_name, optimizer, epochs):
 def update_suffix(args, debug):
     if debug == True:
         args.suffix += 'debug'
-    args.suffix += f'N{args.N}_bs_{args.batch_size}_ep{args.epochs}'\
+    args.suffix += f'{args.comp_test_name}'
+    args.suffix += f'_N{args.N}_bs_{args.batch_size}_ep{args.epochs}'\
                     f'_tr_d_sz{args.train_data_size}_val_d_sz{args.val_data_size}'\
                     f'_model{args.model}_{args.mode}_n_heads{args.n_heads}'\
                     f'_loss_{args.loss_mode}_lr_{args.lr}'
@@ -788,6 +903,8 @@ def main():
             help='suffix to add to the name of the cnn yml file')  
     parser.add_argument('--config_mode', type=int, default=0, 
             help='0 for hparams, 2 for hparams2, 3 for hparams3') 
+    parser.add_argument('--comp_test_name', type=str, default='',
+            help='test name') 
 
     ##---- model parameters
     parser.add_argument('--n_heads', type=int, default=1, 
@@ -802,12 +919,13 @@ def main():
     parser.add_argument('--loss_mode', type=str, default="l1",  
                         help='\'all\' - l1, mse, rel_mse. default: \'l1\' - l1 loss.'
                         'Note: the training loss is always l1') 
+    parser.add_argument('--read_baseline', type=int, default=0, 
+                        help='0: no action, 1: read from matlab to training set'
+                        '2: read from matlab to validation set')
+
     #evaluates to False if not provided, else True
     parser.add_argument('--wandb', action='store_true', 
                         help='Log data using wandb') 
-    parser.add_argument('--read_baseline', action='store_true', 
-                        help='for batch_size of 1, train on the example used in the baseline'
-                        'HeterogenousMRA, compare the results in the end.')
     parser.add_argument('--maxout', action='store_true', 
                         help='True for maxout in middle layer, False for conv1 (default)')
     parser.add_argument('--pow_2_channels', action='store_true', 
@@ -833,7 +951,7 @@ def main():
         args = set_debug_data(args)
 
     args = update_suffix(args, DEBUG)
-    wandb_flag = init(args)
+    wandb_flag, comp_baseline_folders = init(args)
     # Initialize model and optimizer
     model = get_model(args)
     optimizer = set_optimizer(args, model)
@@ -842,24 +960,34 @@ def main():
     print_model_summary(args, model)
 
     # set train dataset and dataloader
-    train_dataset = create_dataset(args, device, args.train_data_size)
+    read_baseline_train = True if args.read_baseline == 1 else False
+    train_dataset = create_dataset(device, args.train_data_size, args.N,
+                                   read_baseline_train, args.mode,
+                                   comp_baseline_folders)
     train_loader = prepare_data_loader(train_dataset, args)
     # set validation dataset and dataloader 
-    val_dataset = create_dataset(args, device, args.val_data_size)
+    read_baseline_val = True if args.read_baseline == 2 else False
+    val_dataset = create_dataset(device, args.val_data_size, args.N,
+                                 read_baseline_val, args.mode,
+                                 comp_baseline_folders)
     val_loader = prepare_data_loader(val_dataset, args)
     # Initialize trainer
     trainer = Trainer(model=model, 
                       train_loader=train_loader, 
                       val_loader=val_loader, 
+                      train_dataset=train_dataset, 
+                      val_dataset=val_dataset, 
                       wandb_flag=wandb_flag,
                       device=device,
                       optimizer=optimizer,
                       scheduler=scheduler,
                       scheduler_name=args.scheduler,
+                      comp_baseline_folders=comp_baseline_folders,
                       args=args)
     
     start_time = time.time()
-    if (wandb_flag):
+    run = None
+    if wandb_flag:
         wandb.login()
         run = wandb.init(project='GaussianBispectrumInversion',
                            name = f"{args.suffix}",
@@ -871,6 +999,14 @@ def main():
         wandb.watch(model, log_freq=100)
     # Train and evaluate
     trainer.run()
+    if wandb_flag:
+        folder = f'figures/cnn_{args.suffix}'
+        fig_path = f'{folder}/x_vs_x_rec.png'
+        #wandb.upload_file(fig_path, f"x_vs_x_rec_ep{args.epochs - 1}.png")
+        artifact = wandb.Artifact("x_vs_x_rec", type="figure")
+        artifact.add_file(fig_path, 
+                          name=f"x_vs_x_rec.png")
+        run.log_artifact(artifact)
     end_time = time.time()
         
     print(f"Time taken to train in {os.path.basename(__file__)}:", 

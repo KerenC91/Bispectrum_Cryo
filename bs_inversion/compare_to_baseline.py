@@ -12,13 +12,13 @@ FOLDER_ROOT = '/scratch/home/kerencohen2/Git/Bispectrum_Cryo/bs_inversion/baseli
 def read_tensor_from_matlab(file, in_train_main = False):
     if in_train_main:
         x = np.loadtxt(file, delimiter=" ")
-        x = torch.tensor(x).unsqueeze(1).unsqueeze(0)
+        x = torch.tensor(x).unsqueeze(0)
     else:
         x = np.loadtxt(file, delimiter=" ")
         x = torch.tensor(x)
     return x
 
-def read_test_results_from_matlab(test_i, folder):
+def read_test_results_from_matlab(folder):
     
     x_true = read_tensor_from_matlab(os.path.join(folder, 'x_true.csv'))
     data = read_tensor_from_matlab(os.path.join(folder, 'data.csv'))
@@ -30,17 +30,17 @@ def read_test_results_from_matlab(test_i, folder):
 
     return x_true, data, shifts, x_est, p_est, rel_error_X, tv_error_p
 
-def read_test_results_from_python(test_i, folder):
+def read_test_results_from_python(folder):
     #CHANGE LATER!!!
     x_true = read_tensor_from_matlab(os.path.join(folder, 'x_true.csv'))
-    data = read_tensor_from_matlab(os.path.join(folder, 'data.csv'))
-    shifts = float(np.loadtxt(os.path.join(folder, 'shifts.csv'), delimiter=" "))
+    # data = read_tensor_from_matlab(os.path.join(folder, 'data.csv'))
+    # shifts = float(np.loadtxt(os.path.join(folder, 'shifts.csv'), delimiter=" "))
     x_est = read_tensor_from_matlab(os.path.join(folder, 'x_est.csv'))
-    p_est = float(np.loadtxt(os.path.join(folder, 'p_est.csv'), delimiter=" "))
+    # p_est = float(np.loadtxt(os.path.join(folder, 'p_est.csv'), delimiter=" "))
     rel_error_X = float(np.loadtxt(os.path.join(folder, 'rel_error_X.csv'), delimiter=" "))
-    tv_error_p = float(np.loadtxt(os.path.join(folder, 'tv_error_p.csv'), delimiter=" "))
+    # tv_error_p = float(np.loadtxt(os.path.join(folder, 'tv_error_p.csv'), delimiter=" "))
 
-    return x_true, data, shifts, x_est, p_est, rel_error_X, tv_error_p
+    return x_true, x_est, rel_error_X
 
 
 def compare_to_baseline_results_per_i(test_i, folder_test, 
@@ -49,11 +49,9 @@ def compare_to_baseline_results_per_i(test_i, folder_test,
     
     x_true_b, data_b, shifts_b, x_est_b, p_est_b, \
         rel_error_X_b, tv_error_p_b = \
-        read_test_results_from_matlab(test_i, sample_path_matlab)
+        read_test_results_from_matlab(sample_path_matlab)
 
-    x_true, data, shifts, x_est, p_est, \
-        rel_error_X, tv_error_p = \
-            read_test_results_from_python(test_i, sample_path_python)
+    x_true, x_est, rel_error_X = read_test_results_from_python(sample_path_python)
 
     full_fig_folder = os.path.join(folder_test, fig_folder)
     if not os.path.exists(full_fig_folder):
@@ -72,7 +70,23 @@ def compare_to_baseline_results_per_i(test_i, folder_test,
     plt.close()
     
     return rel_error_X, rel_error_X_b
-
+   
+def read_python_from_csv(file_path, mode='tensor'):
+    if mode == 'tensor':
+        with open(file_path, 'r') as csvfile:
+            # Create a CSV reader object
+            reader = csv.reader(csvfile)
+            data = []
+            for row in reader:
+                # Convert each row back to a tensor (assuming numerical data)
+                data.append(torch.tensor([float(value) for value in row]))  
+            data = torch.stack(data)
+        # Close the file
+        csvfile.close()
+    else:
+        data = np.loadtxt(file_path, delimiter=" ")
+    return data
+    
 def compare_to_baseline_results(n_runs, folder_test, 
                                 folder_matlab, folder_python, 
                                 rel_error_file='rel_error_X_Xb.csv'):
@@ -102,6 +116,8 @@ if __name__ == '__main__':
     folder_test = os.path.join(root, test_name)
     folder_matlab = os.path.join(folder_test, 'data_from_matlab')
     folder_python = os.path.join(folder_test, 'data_from_python')
-    n_runs_per_test = 2
+    n_tests_python = len(os.listdir(folder_python))
+    n_tests_matlab = len(os.listdir(folder_matlab))
+    n_runs_per_test = min(n_tests_python, n_tests_matlab)
     compare_to_baseline_results(n_runs_per_test, folder_test, folder_matlab,
                                 folder_python)

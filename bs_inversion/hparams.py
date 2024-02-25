@@ -22,9 +22,9 @@ hparams = HParams(
     debug_post_residuals = 1,
     debug_n_heads = 1,
     debug_mode = 'opt',
-    debug_batch_size = 1,
+    debug_batch_size = 5,
     debug_loss_mode = 'all',
-    debug_train_data_size = 1,
+    debug_train_data_size = 10,
     debug_val_data_size = 1,
     debug_epochs = 1,
     debug_channels_model1 = [256, 8],
@@ -120,6 +120,10 @@ hparams = HParams(
     dbg_draw_rate=100,
     loss_lim = 1e-6,
     # comparison with baseline
+    comp_root = '/scratch/home/kerencohen2/Git/Bispectrum_Cryo/bs_inversion/baseline_comp',
+    comp_test_name = 'test_1_sample',
+    comp_n_runs_per_test = 10,
+
     matlab_x_org_file = 'data_from_matlab/sample2/x_true.csv',
     py_x_rec_file = 'data_from_matlab/sample2/py_x_est.csv',
     matlab_x_rec_file = 'data_from_matlab/sample2/x_est.csv',
