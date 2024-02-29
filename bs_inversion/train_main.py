@@ -654,7 +654,29 @@ class UnitVecDataset(Dataset):
     def __getitem__(self, idx):
 
         return idx, (self.source[idx], self.target[idx])
+
+def read_noisy(folder):
+    sample_path = os.path.join(folder, 'data.csv')
+    target = read_tensor_from_matlab(sample_path, True) 
+    shifts = int(np.loadtxt(os.path.join(folder, 'shifts.csv'), delimiter=" "))
+    target = torch.roll(target, -shifts)
     
+    return target    
+
+def read_org(folder):
+    sample_path = os.path.join(folder, 'x_true.csv')
+    target = read_tensor_from_matlab(sample_path, True)  
+    
+    return target  
+
+def set_read_func(folder_matlab):
+    if 'noisy' in folder_matlab:
+        f = read_noisy
+    else:
+        f = read_org
+    return f
+
+
 def create_dataset(device, data_size, N, read_baseline, mode, 
                    comp_baseline_folders):
     bs_calc = BispectrumCalculator(data_size, N, device).to(device)
@@ -669,8 +691,10 @@ def create_dataset(device, data_size, N, read_baseline, mode,
             for i in range(data_size):
 
                 folder = os.path.join(folder_matlab, f'sample{i}')
-                sample_path = os.path.join(folder, 'x_true.csv')
-                target[i] = read_tensor_from_matlab(sample_path, True)              
+                read_func = set_read_func(folder_matlab)
+                
+                target[i] = read_func(folder)
+  
         else:
             print('Error! read data from baseline mode is only possible for '
                   '\'opt\' mode. Please check your parameters.')
@@ -743,6 +767,8 @@ def set_debug_data(args):
     args.mode = hparams.debug_mode
     args.batch_size = hparams.debug_batch_size
     args.loss_mode = hparams.debug_loss_mode
+    args.comp_test_name_m = hparams.comp_test_name
+    args.comp_test_name = 'debug'
     if args.model == 2:
         hparams.channels = hparams.debug_channels_model2
     elif args.model == 3:
@@ -754,7 +780,7 @@ def set_debug_data(args):
     print('WARNING!! DEBUG value is True!')
     args.epochs = hparams.debug_epochs
     hparams.last_ch = hparams.debug_last_ch
-    args.read_baseline = 1
+    args.read_baseline = 2
     
     return args
     
@@ -790,7 +816,7 @@ def init(args):
         folder_test = os.path.join(hparams.comp_root, args.comp_test_name)
         if not os.path.exists(folder_test):
             os.mkdir(folder_test)
-        folder_testm = os.path.join(hparams.comp_root, hparams.comp_test_name)
+        folder_testm = os.path.join(hparams.comp_root, args.comp_test_name_m)
         if not os.path.exists(folder_testm):
             print('Error! folder_testm does not exist\n'
                   f'path={folder_testm}')    
@@ -905,7 +931,8 @@ def main():
             help='0 for hparams, 2 for hparams2, 3 for hparams3') 
     parser.add_argument('--comp_test_name', type=str, default='',
             help='test name') 
-
+    parser.add_argument('--comp_test_name_m', type=str, default='',
+            help='test name matlab') 
     ##---- model parameters
     parser.add_argument('--n_heads', type=int, default=1, 
                     help='number of cnn heads')
@@ -942,8 +969,10 @@ def main():
     
     # set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(device)
     # Parse arguments
     args = parser.parse_args()
+
     #hparams = set_hparams(args.config_mode)
     DEBUG = hparams.DEBUG
 
@@ -960,10 +989,12 @@ def main():
     print_model_summary(args, model)
 
     # set train dataset and dataloader
+    
     read_baseline_train = True if args.read_baseline == 1 else False
     train_dataset = create_dataset(device, args.train_data_size, args.N,
                                    read_baseline_train, args.mode,
                                    comp_baseline_folders)
+
     train_loader = prepare_data_loader(train_dataset, args)
     # set validation dataset and dataloader 
     read_baseline_val = True if args.read_baseline == 2 else False
