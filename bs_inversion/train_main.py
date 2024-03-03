@@ -13,9 +13,11 @@ from hparams import hparams
 import numpy as np
 from trainer import Trainer
 import sys
-
 from torch import nn
 from compare_to_baseline import read_tensor_from_matlab
+
+
+
 # Set the same seed for reproducibility
 #torch.manual_seed(1234)
 
@@ -172,13 +174,11 @@ def prepare_data_loader(dataset, args):
     
     if args.mode =='opt':
         dataloader = DataLoader(
-        dataset,
+        dataset=dataset,
         batch_size=args.batch_size,
         pin_memory=False,
         shuffle=False
     )
-    else:
-        pass
     
     return dataloader
 
@@ -211,7 +211,11 @@ def init(args):
         folder_python = os.path.join(folder_test, 'data_from_python')
         if not os.path.exists(folder_python):
             os.mkdir(folder_python)
-    
+    else:
+        folder_test = ''
+        folder_matlab = ''
+        folder_python = ''
+        
     return wandb_flag, (folder_test, folder_matlab, folder_python)
 
 def set_optimizer(args, model):
@@ -279,82 +283,11 @@ def update_suffix(args, debug):
         args.suffix += f'_dilation_mid{hparams.dilation_mid}'
     
     return args
-            
+
 def main():
-    # Add arguments to parser
-    parser = argparse.ArgumentParser(description='Inverting the bispectrum. Pulse dataset')
-
-    parser.add_argument('--N', type=int, default=10, metavar='N',
-            help='size of vector in the dataset')
-    parser.add_argument('--batch_size', type=int, default=1, metavar='N',
-            help='batch size')
-    parser.add_argument('--wandb_log_interval', type=int, default=10, metavar='N',
-            help='interval to log data to wandb')
-    parser.add_argument('--save_every', type=int, default=100, metavar='N',
-            help='save checkpoint every <save_every> epoch')
-    parser.add_argument('--epochs', type=int, default=5000, metavar='N',
-            help='number of epochs to run')
-    parser.add_argument('--train_data_size', type=int, default=5000, metavar='N',
-            help='the size of the train data') 
-    parser.add_argument('--val_data_size', type=int, default=100, metavar='N',
-            help='the size of the validate data')  
-    parser.add_argument('--scheduler', type=str, default='None',
-            help='\'StepLR\', \'ReduceLROnPlateau\', \'Manual\'. '
-            'Update configurtion parametes accordingly. '
-            'default: \'None\' - no change in lr') 
-    parser.add_argument('--lr', type=float, default=1e-3, metavar='f',
-            help='learning rate (initial for dynamic lr, otherwise fixed)')  
-    parser.add_argument('--mode', type=str, default='opt',
-            help='\'rand\': Create random data during training if True.'
-                    '\'opt\': Optimize on predefined data')  
-    parser.add_argument('--suffix', type=str, default='',
-            help='suffix to add to the name of the cnn yml file')  
-    parser.add_argument('--config_mode', type=int, default=0, 
-            help='0 for hparams, 2 for hparams2, 3 for hparams3') 
-    parser.add_argument('--comp_test_name', type=str, default='',
-            help='test name') 
-    parser.add_argument('--comp_test_name_m', type=str, default='',
-            help='test name matlab') 
-    ##---- model parameters
-    parser.add_argument('--n_heads', type=int, default=1, 
-                    help='number of cnn heads')
-    parser.add_argument('--model', type=int, default=1,  
-                        help='1 for CNNBS1 - reshape size to reduce dimension'
-                        ' 2 for CNNBS2 - strided convolution to reduce dimension')
-    # for CNNBS2
-    parser.add_argument('--reduce_height', type=int, nargs='+', default=[4, 3, 3], 
-                        help='relevant only for model2 - [count kernel stride]'
-                        'for reducing height in tensor: BXCXHXW to BXCX1XW')
-    parser.add_argument('--loss_mode', type=str, default="l1",  
-                        help='\'all\' - l1, mse, rel_mse. default: \'l1\' - l1 loss.'
-                        'Note: the training loss is always l1') 
-    parser.add_argument('--read_baseline', type=int, default=0, 
-                        help='0: no action, 1: read from matlab to training set'
-                        '2: read from matlab to validation set')
-
-    #evaluates to False if not provided, else True
-    parser.add_argument('--wandb', action='store_true', 
-                        help='Log data using wandb') 
-    parser.add_argument('--maxout', action='store_true', 
-                        help='True for maxout in middle layer, False for conv1 (default)')
-    parser.add_argument('--pow_2_channels', action='store_true', 
-                        help='True for power of 2 channels, '
-                        'False for 1 layer with output channel of 8 (default)')
-    parser.add_argument('--normalize', action='store_true',
-                        help='normalizing data for True, else False (default)')
-    parser.add_argument('--early_stopping', action='store_true', 
-                        help='early stopping after early_stopping times. '
-                        'Update early_stopping in configuration') 
-    parser.add_argument('--optimizer', type=str, default="Adam",  
-                        help='The options are \"Adam\"\, \"SGD\"\, \"RMSprop\"\, \"AdamW\"\n'
-                        'Please update relevant parameters in parameters file.') 
-    
     # set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(device)
-    # Parse arguments
-    args = parser.parse_args()
-
     #hparams = set_hparams(args.config_mode)
     DEBUG = hparams.DEBUG
 
@@ -425,6 +358,78 @@ def main():
     print(f"Time taken to train in {os.path.basename(__file__)}:", 
           end_time - start_time, "seconds")
 
-
+          
 if __name__ == "__main__":
+    # Add arguments to parser
+    parser = argparse.ArgumentParser(description='Inverting the bispectrum. Pulse dataset')
+
+    parser.add_argument('--N', type=int, default=10, metavar='N',
+            help='size of vector in the dataset')
+    parser.add_argument('--batch_size', type=int, default=1, metavar='N',
+            help='batch size')
+    parser.add_argument('--wandb_log_interval', type=int, default=10, metavar='N',
+            help='interval to log data to wandb')
+    parser.add_argument('--save_every', type=int, default=100, metavar='N',
+            help='save checkpoint every <save_every> epoch')
+    parser.add_argument('--epochs', type=int, default=5000, metavar='N',
+            help='number of epochs to run')
+    parser.add_argument('--train_data_size', type=int, default=5000, metavar='N',
+            help='the size of the train data') 
+    parser.add_argument('--val_data_size', type=int, default=100, metavar='N',
+            help='the size of the validate data')  
+    parser.add_argument('--scheduler', type=str, default='None',
+            help='\'StepLR\', \'ReduceLROnPlateau\', \'Manual\'. '
+            'Update configurtion parametes accordingly. '
+            'default: \'None\' - no change in lr') 
+    parser.add_argument('--lr', type=float, default=1e-3, metavar='f',
+            help='learning rate (initial for dynamic lr, otherwise fixed)')  
+    parser.add_argument('--mode', type=str, default='opt',
+            help='\'rand\': Create random data during training if True.'
+                    '\'opt\': Optimize on predefined data')  
+    parser.add_argument('--suffix', type=str, default='',
+            help='suffix to add to the name of the cnn yml file')  
+    parser.add_argument('--config_mode', type=int, default=0, 
+            help='0 for hparams, 2 for hparams2, 3 for hparams3') 
+    parser.add_argument('--comp_test_name', type=str, default='',
+            help='test name') 
+    parser.add_argument('--comp_test_name_m', type=str, default='',
+            help='test name matlab') 
+    ##---- model parameters
+    parser.add_argument('--n_heads', type=int, default=1, 
+                    help='number of cnn heads')
+    parser.add_argument('--model', type=int, default=1,  
+                        help='1 for CNNBS1 - reshape size to reduce dimension'
+                        ' 2 for CNNBS2 - strided convolution to reduce dimension')
+    # for CNNBS2
+    parser.add_argument('--reduce_height', type=int, nargs='+', default=[4, 3, 3], 
+                        help='relevant only for model2 - [count kernel stride]'
+                        'for reducing height in tensor: BXCXHXW to BXCX1XW')
+    parser.add_argument('--loss_mode', type=str, default="l1",  
+                        help='\'all\' - l1, mse, rel_mse. default: \'l1\' - l1 loss.'
+                        'Note: the training loss is always l1') 
+    parser.add_argument('--read_baseline', type=int, default=0, 
+                        help='0: no action, 1: read from matlab to training set'
+                        '2: read from matlab to validation set')
+
+    #evaluates to False if not provided, else True
+    parser.add_argument('--wandb', action='store_true', 
+                        help='Log data using wandb') 
+    parser.add_argument('--maxout', action='store_true', 
+                        help='True for maxout in middle layer, False for conv1 (default)')
+    parser.add_argument('--pow_2_channels', action='store_true', 
+                        help='True for power of 2 channels, '
+                        'False for 1 layer with output channel of 8 (default)')
+    parser.add_argument('--normalize', action='store_true',
+                        help='normalizing data for True, else False (default)')
+    parser.add_argument('--early_stopping', action='store_true', 
+                        help='early stopping after early_stopping times. '
+                        'Update early_stopping in configuration') 
+    parser.add_argument('--optimizer', type=str, default="Adam",  
+                        help='The options are \"Adam\"\, \"SGD\"\, \"RMSprop\"\, \"AdamW\"\n'
+                        'Please update relevant parameters in parameters file.') 
+    
+
+    # Parse arguments
+    args = parser.parse_args()
+
     main()

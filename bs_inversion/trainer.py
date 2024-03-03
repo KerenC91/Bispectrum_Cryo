@@ -21,6 +21,7 @@ class Trainer:
                  scheduler_name,
                  comp_baseline_folders,
                  args):
+        self.device = device 
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.train_dataset=train_dataset
@@ -32,7 +33,6 @@ class Trainer:
         self.val_data_size = args.val_data_size
         self.target_len = args.N
         self.save_every = args.save_every
-        self.device = device 
         self.model = model.to(self.device)
         self.wandb_flag = wandb_flag
         self.normalize = args.normalize
@@ -358,7 +358,7 @@ class Trainer:
             # optimizer step
             self.optimizer.step()
             # update avg loss 
-            total_loss += loss.item()
+            total_loss += loss
             
         avg_loss = total_loss / len(self.train_loader)
         
@@ -379,9 +379,9 @@ class Trainer:
             # optimizer step
             self.optimizer.step()
             # update avg loss 
-            total_loss += loss.item()
-            total_mse_loss += mse_loss.item()
-            total_mse_norm_loss += rel_mse_loss.item()
+            total_loss += loss
+            total_mse_loss += mse_loss
+            total_mse_norm_loss += rel_mse_loss
             
         avg_loss = total_loss / len(self.train_loader)
         avg_mse_loss = total_mse_loss / len(self.train_loader) 
@@ -398,9 +398,9 @@ class Trainer:
             # forward pass + loss computation
             loss, mse_loss, rel_mse_loss = self._run_batch(sources, targets)
             # update avg loss 
-            total_loss += loss.item()
-            total_mse_loss += mse_loss.item()
-            total_mse_norm_loss += rel_mse_loss.item()
+            total_loss += loss
+            total_mse_loss += mse_loss
+            total_mse_norm_loss += rel_mse_loss
             
         avg_loss = total_loss / len(self.val_loader)
         avg_mse_loss = total_mse_loss / len(self.val_loader) 
@@ -451,7 +451,7 @@ class Trainer:
                 # forward pass + loss computation
                 loss = self._run_batch(sources, targets)
                 # update avg loss 
-                total_loss += loss.item()
+                total_loss += loss
             
         avg_loss = total_loss / len(self.val_loader)
             
@@ -569,24 +569,24 @@ class Trainer:
                     self.scheduler.step()
             # log loss with wandb
             if self.wandb_flag and self.epoch % self.wandb_log_interval == 0:
-                wandb.log({"train_loss_l1": train_loss})
-                wandb.log({"val_loss_l1": val_loss})
+                wandb.log({"train_loss_l1": train_loss.item()})
+                wandb.log({"val_loss_l1": val_loss.item()})
                 wandb.log({"lr": self.optimizer.param_groups[0]['lr']})
                 if self.loss_mode == 'all':
-                    wandb.log({"train mse": train_mse_loss})
-                    wandb.log({"train relative mse": train_rel_mse_loss})
-                    wandb.log({"val mse": val_mse_loss})
-                    wandb.log({"val relative mse": val_rel_mse_loss})
+                    wandb.log({"train mse": train_mse_loss.item()})
+                    wandb.log({"train relative mse": train_rel_mse_loss.item()})
+                    wandb.log({"val mse": val_mse_loss.item()})
+                    wandb.log({"val relative mse": val_rel_mse_loss.item()})
             # save checkpoint and log loss to cmd 
             if self.epoch % self.save_every == 0:
                 print(f'-------Epoch {self.epoch}/{self.epochs}-------')
-                print(f'Train loss l1: {train_loss:.6f}')
-                print(f'Validation loss l1: {val_loss:.6f}')
+                print(f'Train loss l1: {train_loss.item():.6f}')
+                print(f'Validation loss l1: {val_loss.item():.6f}')
                 if self.loss_mode == 'all':
-                    print(f'train mse loss: {train_mse_loss:.6f}')
-                    print(f'train relative mse loss: {train_rel_mse_loss:.6f}')
-                    print(f'val mse loss: {val_mse_loss:.6f}')
-                    print(f'val relative mse loss: {val_rel_mse_loss:.6f}')
+                    print(f'train mse loss: {train_mse_loss.item():.6f}')
+                    print(f'train relative mse loss: {train_rel_mse_loss.item():.6f}')
+                    print(f'val mse loss: {val_mse_loss.item():.6f}')
+                    print(f'val relative mse loss: {val_rel_mse_loss.item():.6f}')
                 if self.scheduler_name != 'None':
                     print(f'lr: {last_lr}')
                 # save checkpoint
@@ -614,17 +614,17 @@ class Trainer:
                     self.es_cnt +=1
                     if self.es_cnt == self.early_stopping:
                         print(f'Stooped at epoch {self.epoch}, after {self.es_cnt} times\n'
-                              f'last_loss={self.last_loss}, curr_los={train_loss}')
+                        		f'last_loss={self.last_loss.item()}, curr_los={train_loss.item()}')
                         folder = f'figures/cnn_{self.suffix}'
                         self.plot_output_debug(self.last_target[0].squeeze(0).detach().cpu().numpy(),
                                                self.last_output[0].squeeze(0).detach().cpu().numpy(), 
                                                folder)
                         return
             # stop if loss has reached lower bound
-            if train_loss < hparams.loss_lim:
+            if train_loss.item() < hparams.loss_lim:
                 print(f'Stooped at epoch {self.epoch},\n'
-                      f'curr_los={train_loss} < {hparams.loss_lim}')    
+                      f'curr_los={train_loss.item()} < {hparams.loss_lim}')    
                 self.last_loss = train_loss
         # test
         test_loss = self.test()
-        print(f'Test loss l1: {test_loss:.6f}')
+        print(f'Test loss l1: {test_loss.item():.6f}')
