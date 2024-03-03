@@ -501,7 +501,7 @@ class Trainer:
 
     # one epoch of testing 
     def test(self):
-        return 0
+        return torch.tensor(0)
     
     def write_python_test_results(self, dataset):#changedataloader
         dataloader = DataLoader(

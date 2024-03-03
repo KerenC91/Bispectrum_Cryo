@@ -151,7 +151,7 @@ def set_debug_data(args):
     args.mode = hparams.debug_mode
     args.batch_size = hparams.debug_batch_size
     args.loss_mode = hparams.debug_loss_mode
-    args.comp_test_name_m = hparams.comp_test_name
+    args.comp_test_name_m = hparams.debug_comp_test_name_m
     args.comp_test_name = 'debug'
     if args.model == 2:
         hparams.channels = hparams.debug_channels_model2
@@ -164,7 +164,8 @@ def set_debug_data(args):
     print('WARNING!! DEBUG value is True!')
     args.epochs = hparams.debug_epochs
     hparams.last_ch = hparams.debug_last_ch
-    args.read_baseline = 2
+    args.read_baseline = hparams.debug_read_baseline
+    args.scheduler = hparams.debug_scheduler
     
     return args
     
@@ -284,7 +285,7 @@ def update_suffix(args, debug):
     
     return args
 
-def main():
+def main(args):
     # set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(device)
@@ -397,7 +398,7 @@ if __name__ == "__main__":
     ##---- model parameters
     parser.add_argument('--n_heads', type=int, default=1, 
                     help='number of cnn heads')
-    parser.add_argument('--model', type=int, default=1,  
+    parser.add_argument('--model', type=int, default=3,  
                         help='1 for CNNBS1 - reshape size to reduce dimension'
                         ' 2 for CNNBS2 - strided convolution to reduce dimension')
     # for CNNBS2
@@ -432,4 +433,4 @@ if __name__ == "__main__":
     # Parse arguments
     args = parser.parse_args()
 
-    main()
+    main(args)

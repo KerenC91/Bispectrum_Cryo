@@ -12,25 +12,27 @@ hparams = HParams(
     #####################################
     # debug parameters
     #####################################
-    DEBUG = False,
+    DEBUG = True,
     debug_model = 3,
     debug_N = 100,
     debug_last_ch = 256,# 8 for 1, 2,
     debug_pre_conv_channels = [8, 32, 256], # [8, 32, 64, debug_last_ch]
-    debug_pre_residuals = 1,
-    debug_up_residuals = 1,
-    debug_post_residuals = 1,
+    debug_pre_residuals = 11,
+    debug_up_residuals = 3,
+    debug_post_residuals = 14,
     debug_n_heads = 1,
     debug_mode = 'opt',
-    debug_batch_size = 5,
+    debug_batch_size = 1,
     debug_loss_mode = 'all',
-    debug_train_data_size = 10,
-    debug_val_data_size = 1,
-    debug_epochs = 1,
+    debug_train_data_size = 20,
+    debug_val_data_size = 10,
+    debug_epochs = 7500,
     debug_channels_model1 = [256, 8],
     debug_channels_model2 = [256, 64],
     debug_channels_model3 = [256, 8], # [256, debug_last_ch]
-
+    debug_scheduler = "Manual",
+    debug_read_baseline = 0,
+    debug_comp_test_name_m = 'test_1_sample',
 
     #####################################
     # Training config
@@ -121,7 +123,6 @@ hparams = HParams(
     loss_lim = 1e-6,
     # comparison with baseline
     comp_root = '/scratch/home/kerencohen2/Git/Bispectrum_Cryo/bs_inversion/baseline_comp',
-    comp_test_name = 'test_1_sample',
     comp_n_runs_per_test = 10,
 
     matlab_x_org_file = 'data_from_matlab/sample2/x_true.csv',
