@@ -6,6 +6,9 @@ from hparams import hparams
 import matplotlib.pyplot as plt
 import numpy as np
 from torch.utils.data import DataLoader
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.distributed as dist
+from torch.distributed import init_process_group, destroy_process_group, all_reduce
 
 
 class Trainer:
@@ -21,6 +24,7 @@ class Trainer:
                  scheduler_name,
                  comp_baseline_folders,
                  args):
+        self.device = device 
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.train_dataset=train_dataset
@@ -32,8 +36,8 @@ class Trainer:
         self.val_data_size = args.val_data_size
         self.target_len = args.N
         self.save_every = args.save_every
-        self.device = device 
         self.model = model.to(self.device)
+        self.model = DDP(model, device_ids=[device], find_unused_parameters=True)
         self.wandb_flag = wandb_flag
         self.normalize = args.normalize
         self.mode = args.mode
@@ -291,7 +295,7 @@ class Trainer:
         target = target.to(self.device)
         source = source.to(self.device)
         # Forward pass
-        _, output = self.model(source) # reconstructed signal
+        output = self.model(source) # reconstructed signal
         self.last_output = output
         self.last_target = target
         # Loss calculation
@@ -311,7 +315,7 @@ class Trainer:
         target = target.to(self.device)
         source = source.to(self.device)
         # Forward pass
-        _, output = self.model(source) # reconstructed signal
+        output = self.model(source) # reconstructed signal
         self.last_output = output
         # if self.epoch % hparams.dbg_draw_rate == 0:
         #     self.plot_output_debug(target, output)
@@ -338,7 +342,7 @@ class Trainer:
         plt.close()
    
     def _save_checkpoint(self, epoch):
-        ckp = self.model.state_dict()
+        ckp = self.model.module.state_dict()
         folder = f'./checkpoints/cnn_{self.suffix}'
         PATH = f"{folder}/checkpoint_ep{epoch}.pt"
         if not os.path.exists(folder):
@@ -358,7 +362,7 @@ class Trainer:
             # optimizer step
             self.optimizer.step()
             # update avg loss 
-            total_loss += loss.item()
+            total_loss += loss
             
         avg_loss = total_loss / len(self.train_loader)
         
@@ -379,9 +383,9 @@ class Trainer:
             # optimizer step
             self.optimizer.step()
             # update avg loss 
-            total_loss += loss.item()
-            total_mse_loss += mse_loss.item()
-            total_mse_norm_loss += rel_mse_loss.item()
+            total_loss += loss
+            total_mse_loss += mse_loss
+            total_mse_norm_loss += rel_mse_loss
             
         avg_loss = total_loss / len(self.train_loader)
         avg_mse_loss = total_mse_loss / len(self.train_loader) 
@@ -398,9 +402,9 @@ class Trainer:
             # forward pass + loss computation
             loss, mse_loss, rel_mse_loss = self._run_batch(sources, targets)
             # update avg loss 
-            total_loss += loss.item()
-            total_mse_loss += mse_loss.item()
-            total_mse_norm_loss += rel_mse_loss.item()
+            total_loss += loss
+            total_mse_loss += mse_loss
+            total_mse_norm_loss += rel_mse_loss
             
         avg_loss = total_loss / len(self.val_loader)
         avg_mse_loss = total_mse_loss / len(self.val_loader) 
@@ -451,7 +455,7 @@ class Trainer:
                 # forward pass + loss computation
                 loss = self._run_batch(sources, targets)
                 # update avg loss 
-                total_loss += loss.item()
+                total_loss += loss
             
         avg_loss = total_loss / len(self.val_loader)
             
@@ -515,7 +519,7 @@ class Trainer:
             target = target.to(self.device)
             source = source.to(self.device)
             # Forward pass
-            _, output = self.model(source) # reconstructed signal
+            output = self.model(source) # reconstructed signal
             self.save_python_test_data(idx.item(), output, target)
             
     def save_python_test_data(self, i, x_est, x_true):
@@ -549,15 +553,30 @@ class Trainer:
     def run(self):
         for self.epoch in range(self.epochs):
             # train             
+            self.train_loader.sampler.set_epoch(self.epoch)
             train_loss = self.train()
             # validate
+            self.val_loader.sampler.set_epoch(self.epoch)
             val_loss = self.validate()
+
 
             if self.loss_mode == 'all':
                 train_loss, train_mse_loss, train_rel_mse_loss = train_loss
                 val_loss, val_mse_loss, val_rel_mse_loss = val_loss
-            # update lr
-            
+                # Get loss from all processes
+                all_reduce(train_loss, op=dist.ReduceOp.AVG)
+                all_reduce(train_mse_loss, op=dist.ReduceOp.AVG)
+                all_reduce(train_rel_mse_loss, op=dist.ReduceOp.AVG)
+                
+                all_reduce(val_loss, op=dist.ReduceOp.AVG)
+                all_reduce(val_mse_loss, op=dist.ReduceOp.AVG)
+                all_reduce(val_rel_mse_loss, op=dist.ReduceOp.AVG)
+            else:
+                # Get loss from all processes
+                all_reduce(train_loss, op=dist.ReduceOp.AVG)
+                all_reduce(val_loss, op=dist.ReduceOp.AVG) 
+                
+            # update lr            
             if self.scheduler_name != 'None':
                 last_lr = self.optimizer.param_groups[0]['lr']
                 if self.scheduler_name == 'Manual':
@@ -567,64 +586,66 @@ class Trainer:
                     self.scheduler.step(train_loss)
                 elif self.scheduler_name == 'StepLR':
                     self.scheduler.step()
-            # log loss with wandb
-            if self.wandb_flag and self.epoch % self.wandb_log_interval == 0:
-                wandb.log({"train_loss_l1": train_loss})
-                wandb.log({"val_loss_l1": val_loss})
-                wandb.log({"lr": self.optimizer.param_groups[0]['lr']})
-                if self.loss_mode == 'all':
-                    wandb.log({"train mse": train_mse_loss})
-                    wandb.log({"train relative mse": train_rel_mse_loss})
-                    wandb.log({"val mse": val_mse_loss})
-                    wandb.log({"val relative mse": val_rel_mse_loss})
-            # save checkpoint and log loss to cmd 
-            if self.epoch % self.save_every == 0:
-                print(f'-------Epoch {self.epoch}/{self.epochs}-------')
-                print(f'Train loss l1: {train_loss:.6f}')
-                print(f'Validation loss l1: {val_loss:.6f}')
-                if self.loss_mode == 'all':
-                    print(f'train mse loss: {train_mse_loss:.6f}')
-                    print(f'train relative mse loss: {train_rel_mse_loss:.6f}')
-                    print(f'val mse loss: {val_mse_loss:.6f}')
-                    print(f'val relative mse loss: {val_rel_mse_loss:.6f}')
-                if self.scheduler_name != 'None':
-                    print(f'lr: {last_lr}')
-                # save checkpoint
-                self._save_checkpoint(self.epoch)
-            # plot last output
-            if self.epoch == self.epochs - 1:
-                folder = f'figures/cnn_{self.suffix}'
-                self.plot_output_debug(self.last_target[0].squeeze(0).detach().cpu().numpy(), 
-                                       self.last_output[0].squeeze(0).detach().cpu().numpy(),
-                                       folder)
-                if self.read_baseline != 0:
-                    if self.read_baseline == 1: # train
-                        self.write_python_test_results(self.train_dataset)
-                    elif self.read_baseline == 2:
-                        self.write_python_test_results(self.val_dataset)
-                    # with open(hparams.py_x_rec_file, "w", newline="") as csvfile:
-                    #     # Create a CSV writer object
-                    #     writer = csv.writer(csvfile)
-                    
-                    #     # Write the data to the file
-                    #     writer.writerows(self.last_output[0])
-            # stop early if early_stopping is on
-            if self.early_stopping != 0:
-                if self.last_loss < train_loss:
-                    self.es_cnt +=1
-                    if self.es_cnt == self.early_stopping:
-                        print(f'Stooped at epoch {self.epoch}, after {self.es_cnt} times\n'
-                              f'last_loss={self.last_loss}, curr_los={train_loss}')
-                        folder = f'figures/cnn_{self.suffix}'
-                        self.plot_output_debug(self.last_target[0].squeeze(0).detach().cpu().numpy(),
-                                               self.last_output[0].squeeze(0).detach().cpu().numpy(), 
-                                               folder)
-                        return
-            # stop if loss has reached lower bound
-            if train_loss < hparams.loss_lim:
-                print(f'Stooped at epoch {self.epoch},\n'
-                      f'curr_los={train_loss} < {hparams.loss_lim}')    
-                self.last_loss = train_loss
+            # Only gpu 0 operating now...
+            if self.device == 0: 
+                # log loss with wandb
+                if self.wandb_flag and self.epoch % self.wandb_log_interval == 0:
+                    wandb.log({"train_loss_l1": train_loss.item()})
+                    wandb.log({"val_loss_l1": val_loss.item()})
+                    wandb.log({"lr": self.optimizer.param_groups[0]['lr']})
+                    if self.loss_mode == 'all':
+                        wandb.log({"train mse": train_mse_loss.item()})
+                        wandb.log({"train relative mse": train_rel_mse_loss.item()})
+                        wandb.log({"val mse": val_mse_loss.item()})
+                        wandb.log({"val relative mse": val_rel_mse_loss.item()})
+                # save checkpoint and log loss to cmd 
+                if self.epoch % self.save_every == 0:
+                    print(f'-------Epoch {self.epoch}/{self.epochs}-------')
+                    print(f'Train loss l1: {train_loss.item():.6f}')
+                    print(f'Validation loss l1: {val_loss.item():.6f}')
+                    if self.loss_mode == 'all':
+                        print(f'train mse loss: {train_mse_loss.item():.6f}')
+                        print(f'train relative mse loss: {train_rel_mse_loss.item():.6f}')
+                        print(f'val mse loss: {val_mse_loss.item():.6f}')
+                        print(f'val relative mse loss: {val_rel_mse_loss.item():.6f}')
+                    if self.scheduler_name != 'None':
+                        print(f'lr: {last_lr}')
+                    # save checkpoint
+                    self._save_checkpoint(self.epoch)
+                # plot last output
+                if self.epoch == self.epochs - 1:
+                    folder = f'figures/cnn_{self.suffix}'
+                    self.plot_output_debug(self.last_target[0].squeeze(0).detach().cpu().numpy(), 
+                                           self.last_output[0].squeeze(0).detach().cpu().numpy(),
+                                           folder)
+                    if self.read_baseline != 0:
+                        if self.read_baseline == 1: # train
+                            self.write_python_test_results(self.train_dataset)
+                        elif self.read_baseline == 2:
+                            self.write_python_test_results(self.val_dataset)
+                        # with open(hparams.py_x_rec_file, "w", newline="") as csvfile:
+                        #     # Create a CSV writer object
+                        #     writer = csv.writer(csvfile)
+                        
+                        #     # Write the data to the file
+                        #     writer.writerows(self.last_output[0])
+                # stop early if early_stopping is on
+                if self.early_stopping != 0:
+                    if self.last_loss < train_loss:
+                        self.es_cnt +=1
+                        if self.es_cnt == self.early_stopping:
+                            print(f'Stooped at epoch {self.epoch}, after {self.es_cnt} times\n'
+                                  f'last_loss={self.last_loss.item()}, curr_los={train_loss.item()}')
+                            folder = f'figures/cnn_{self.suffix}'
+                            self.plot_output_debug(self.last_target[0].squeeze(0).detach().cpu().numpy(),
+                                                   self.last_output[0].squeeze(0).detach().cpu().numpy(), 
+                                                   folder)
+                            return
+                # stop if loss has reached lower bound
+                if train_loss.item() < hparams.loss_lim:
+                    print(f'Stooped at epoch {self.epoch},\n'
+                          f'curr_los={train_loss.item()} < {hparams.loss_lim}')    
+                    self.last_loss = train_loss
         # test
         test_loss = self.test()
-        print(f'Test loss l1: {test_loss:.6f}')
+        print(f'Test loss l1: {test_loss.item():.6f}')

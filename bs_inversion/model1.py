@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import numpy as np
 from model_utils import ResnetBlock, ConvBlock, MidLayer
-
+from hparams import hparams
     
 class HeadBS1(nn.Module):
     """HeadBS1 module - Original one with reshape
@@ -13,7 +13,7 @@ class HeadBS1(nn.Module):
         down_conv_channels (list): list of #channels in each down_conv blocks
         up_residuals (int, optional): number of residual blocks in each upsampling module. Default: 0
     """
-    def __init__(self, input_len, channels,
+    def __init__(self, device, input_len, channels,
           pre_residuals,
           pre_conv_channels,
           up_residuals,
@@ -26,6 +26,7 @@ class HeadBS1(nn.Module):
           ):
         super(HeadBS1, self).__init__()
 
+        self.device = device
         # Initialize learnable output factor
         self.f = torch.nn.Parameter(torch.ones(1))
 
@@ -136,7 +137,7 @@ class HeadBS1(nn.Module):
         x2 *= self.f
         #print('end Head')
         
-        return x, x2# pre, post
+        return x2# pre, post
         
        
 class CNNBS(nn.Module):
@@ -146,7 +147,7 @@ class CNNBS(nn.Module):
         n_heads (int): Number of heads
         layer_channels (list): list of #channels of each layer
     """
-    def __init__(self, input_len, n_heads, 
+    def __init__(self, device, input_len, n_heads, 
          channels,
          b_maxout,
          pre_conv_channels,
@@ -160,12 +161,13 @@ class CNNBS(nn.Module):
          activation):
 
         super(CNNBS, self).__init__()
+        self.device = device
         self.n_heads = n_heads
         self.linear = nn.Linear(linear_ch, 1)
         self.Head = head_class
         self.act_fn = activation
             
-        self.heads = nn.ModuleList([self.Head(input_len, channels, b_maxout=b_maxout,
+        self.heads = nn.ModuleList([self.Head(device, input_len, channels, b_maxout=b_maxout,
                 pre_conv_channels=pre_conv_channels, 
                 pre_residuals=pre_residuals, up_residuals=up_residuals,
                 post_residuals=post_residuals, pow_2_channels=pow_2_channels, 
@@ -176,30 +178,24 @@ class CNNBS(nn.Module):
 
         # Pass over Heads in "parallel"
         if self.n_heads > 1:
-            pre_list = []
             post_list = []
             #print('Pass over Heads in parallel- start')
 
             for head in self.heads:
-                pre, post = head(x)
+                post = head(x)
 
-                pre_list.append(pre)
                 post_list.append(post)
                 #print(head.f)
             #print('Pass over Heads in parallel- end')
             # Sum Heads outputs
-            pre = torch.sum(torch.stack(pre_list), dim=0)
             post = torch.sum(torch.stack(post_list), dim=0)
         else:
             # Pass over Head
-            pre, post = self.heads[0](x)
+            post = self.heads[0](x)
             
-        # Pre output
-        rs0 = self.linear(pre.transpose(1, 2))
-        rs0 = self.act_fn(rs0).transpose(2, 1)
         
         # Post output - actually used
         rs1 = self.linear(post.transpose(1, 2))
         rs1 = self.act_fn(rs1).transpose(2, 1)
         
-        return rs0, rs1 
+        return rs1 

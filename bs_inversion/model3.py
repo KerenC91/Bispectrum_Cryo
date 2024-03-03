@@ -13,7 +13,7 @@ class HeadBS3(nn.Module):
         down_conv_channels (list): list of #channels in each down_conv blocks
         up_residuals (int, optional): number of residual blocks in each upsampling module. Default: 0
     """
-    def __init__(self, input_len, channels,
+    def __init__(self, device, input_len, channels,
           pre_residuals,
           pre_conv_channels,
           up_residuals,
@@ -25,6 +25,7 @@ class HeadBS3(nn.Module):
           bs_channels=2
           ):
         super(HeadBS3, self).__init__()
+        self.device = device
         # Initialize learnable output factor
         self.f = torch.nn.Parameter(torch.ones(1))
 
@@ -167,5 +168,5 @@ class HeadBS3(nn.Module):
         #print(x2.shape)
         x2 *= self.f
         
-        return x, x2# pre, post
+        return x2# pre, post
 

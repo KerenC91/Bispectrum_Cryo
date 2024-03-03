@@ -13,14 +13,19 @@ from hparams import hparams
 import numpy as np
 from trainer import Trainer
 import sys
-
 from torch import nn
 from compare_to_baseline import read_tensor_from_matlab
+import torch.multiprocessing as mp
+from torch.distributed import init_process_group, destroy_process_group
+from torch.utils.data.distributed import DistributedSampler
+import torch.distributed as dist
+
 # Set the same seed for reproducibility
 #torch.manual_seed(1234)
 
+IDLE_GPU = 1
+os.environ["CUDA_VISIBLE_DEVICES"] = "1, 2, 3"
 
-                
 
 class UnitVecDataset(Dataset):
     
@@ -61,6 +66,7 @@ def set_read_func(folder_matlab):
 
 def create_dataset(device, data_size, N, read_baseline, mode, 
                    comp_baseline_folders):
+    device='cpu'
     bs_calc = BispectrumCalculator(data_size, N, device).to(device)
     if read_baseline:
         target = torch.zeros(data_size, 1, N)
@@ -85,7 +91,7 @@ def create_dataset(device, data_size, N, read_baseline, mode,
         target = torch.randn(data_size, 1, N)
     target.to(device)
     source, target = bs_calc(target)
-    
+
     dataset = UnitVecDataset(source, target)
     return dataset
 
@@ -105,7 +111,7 @@ def set_activation(activation_name):
         
     return activation
         
-def get_model(args):
+def get_model(device, args):
     if args.model == 2:
         head_class = HeadBS2
         channels = hparams.channels_model2
@@ -122,6 +128,7 @@ def get_model(args):
         
     activation = set_activation(hparams.activation)
     model = CNNBS(
+        device=device,
         input_len=args.N,
         n_heads=args.n_heads,
         channels=channels,
@@ -136,49 +143,19 @@ def get_model(args):
         linear_ch=hparams.last_ch,
         activation=activation
         )
-    return model
-
-def set_debug_data(args):
-    args.N = hparams.debug_N				
-    hparams.pre_conv_channels = hparams.debug_pre_conv_channels
-    hparams.pre_residuals = hparams.debug_pre_residuals
-    hparams.up_residuals = hparams.debug_up_residuals
-    hparams.post_residuals = hparams.debug_post_residuals
-    hparams.n_heads = hparams.debug_n_heads
-    args.model = hparams.debug_model
-    args.mode = hparams.debug_mode
-    args.batch_size = hparams.debug_batch_size
-    args.loss_mode = hparams.debug_loss_mode
-    args.comp_test_name_m = hparams.comp_test_name
-    args.comp_test_name = 'debug'
-    if args.model == 2:
-        hparams.channels = hparams.debug_channels_model2
-    elif args.model == 3:
-        hparams.channels = hparams.debug_channels_model3
-    else:
-       hparams.channels = hparams.debug_channels_model1
-    args.train_data_size = hparams.debug_train_data_size
-    args.val_data_size = hparams.debug_val_data_size
-    print('WARNING!! DEBUG value is True!')
-    args.epochs = hparams.debug_epochs
-    hparams.last_ch = hparams.debug_last_ch
-    args.read_baseline = 2
-    
-    return args
-    
+    return model   
     
 def prepare_data_loader(dataset, args):
     dataloader = None
     
     if args.mode =='opt':
         dataloader = DataLoader(
-        dataset,
+        dataset=dataset,
         batch_size=args.batch_size,
-        pin_memory=False,
-        shuffle=False
+        pin_memory=True,
+        shuffle=False,
+        sampler=DistributedSampler(dataset)
     )
-    else:
-        pass
     
     return dataloader
 
@@ -211,26 +188,31 @@ def init(args):
         folder_python = os.path.join(folder_test, 'data_from_python')
         if not os.path.exists(folder_python):
             os.mkdir(folder_python)
+    else:
+        folder_test = ''
+        folder_matlab = ''
+        folder_python = ''
     
     return wandb_flag, (folder_test, folder_matlab, folder_python)
 
 def set_optimizer(args, model):
     
+    lr = args.lr * args.nproc
     if args.optimizer == 'SGD':
-        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr,
+        optimizer = torch.optim.SGD(model.parameters(), lr=lr,
                                     momentum=hparams.opt_sgd_momentum,
                                     weight_decay=hparams.opt_sgd_weight_decay)
     elif args.optimizer == 'RMSProp':
-        optimizer = torch.optim.RMSProp(model.parameters(), lr=args.lr, 
+        optimizer = torch.optim.RMSProp(model.parameters(), lr=lr, 
                                         alpha=hparams.opt_rms_prop_alpha,
                                         eps=hparams.opt_eps)
     elif args.optimizer == 'AdamW':
-        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr,
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr,
                                       betas=hparams.opt_adam_w_betas,
                                       eps=hparams.opt_eps,
                                       weight_decay=hparams.opt_adam_w_weight_decay)
     else: # Adam
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr,
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr,
                                       betas=hparams.opt_adam_betas,
                                       eps=hparams.opt_adam_eps,
                                       weight_decay=hparams.opt_adam_weight_decay)
@@ -265,9 +247,7 @@ def set_scheduler(scheduler_name, optimizer, epochs):
     return scheduler
 
     
-def update_suffix(args, debug):
-    if debug == True:
-        args.suffix += 'debug'
+def update_suffix(args):
     args.suffix += f'{args.comp_test_name}'
     args.suffix += f'_N{args.N}_bs_{args.batch_size}_ep{args.epochs}'\
                     f'_tr_d_sz{args.train_data_size}_val_d_sz{args.val_data_size}'\
@@ -279,8 +259,102 @@ def update_suffix(args, debug):
         args.suffix += f'_dilation_mid{hparams.dilation_mid}'
     
     return args
-            
-def main():
+
+def ddp_setup(rank, world_size):
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "12532" #any free port
+    init_process_group(backend="nccl", rank=rank, world_size=world_size)
+    torch.cuda.set_device(rank)
+
+
+def main(device, args):
+    
+    # Apply ddp setup
+    ddp_setup(device, args.nproc)
+    
+    if torch.cuda.is_available():
+        print("GPU available!")
+    else:
+        print("GPU not available, using CPU.")
+    print(f'Using GPU {device}')
+    
+    args = update_suffix(args)
+    wandb_flag, comp_baseline_folders = init(args)
+    
+    # Initialize model and optimizer
+    model = get_model(device, args)
+    optimizer = set_optimizer(args, model)
+    scheduler = set_scheduler(args.scheduler, optimizer, args.epochs)
+    # print and save model
+    print_model_summary(args, model)
+
+    # set train dataset and dataloader
+    
+    read_baseline_train = True if args.read_baseline == 1 else False
+    train_dataset = create_dataset(device, args.train_data_size, args.N,
+                                   read_baseline_train, args.mode,
+                                   comp_baseline_folders)
+
+    train_loader = prepare_data_loader(train_dataset, args)
+    # set validation dataset and dataloader 
+    read_baseline_val = True if args.read_baseline == 2 else False
+    val_dataset = create_dataset(device, args.val_data_size, args.N,
+                                 read_baseline_val, args.mode,
+                                 comp_baseline_folders)
+    val_loader = prepare_data_loader(val_dataset, args)
+    # Initialize trainer
+    trainer = Trainer(model=model, 
+                      train_loader=train_loader, 
+                      val_loader=val_loader, 
+                      train_dataset=train_dataset, 
+                      val_dataset=val_dataset, 
+                      wandb_flag=wandb_flag,
+                      device=device,
+                      optimizer=optimizer,
+                      scheduler=scheduler,
+                      scheduler_name=args.scheduler,
+                      comp_baseline_folders=comp_baseline_folders,
+                      args=args)
+ 
+    # Get start time
+    if trainer.device not in [-1, IDLE_GPU]:
+        dist.barrier()
+    # Only gpu 0 operating now...
+    if trainer.device == IDLE_GPU:
+        start_time = time.time()
+        run = None
+        if wandb_flag:
+            wandb.login()
+            run = wandb.init(project='GaussianBispectrumInversion',
+                               name = f"{args.suffix}",
+                               config=args)
+            wandb.log({"cmd_line": sys.argv})
+            wandb.save('hparams.py')
+            wandb.save("train_main.py")
+            wandb.save(f"model{args.model}.py")        
+            wandb.watch(model, log_freq=100)
+    # Train and evaluate
+    trainer.run()
+    # Get end time 
+    if trainer.device not in [-1, IDLE_GPU]:
+        dist.barrier()
+    if trainer.device == IDLE_GPU:
+        # Only gpu IDLE_GPU operating now...        
+        if wandb_flag:
+            folder = f'figures/cnn_{args.suffix}'
+            fig_path = f'{folder}/x_vs_x_rec.png'
+            #wandb.upload_file(fig_path, f"x_vs_x_rec_ep{args.epochs - 1}.png")
+            artifact = wandb.Artifact("x_vs_x_rec", type="figure")
+            artifact.add_file(fig_path, name="x_vs_x_rec.png")
+            run.log_artifact(artifact)
+        end_time = time.time()
+        
+        print(f"Time taken to train in {os.path.basename(__file__)}:", 
+              end_time - start_time, "seconds")
+
+    destroy_process_group()          
+
+if __name__ == "__main__":
     # Add arguments to parser
     parser = argparse.ArgumentParser(description='Inverting the bispectrum. Pulse dataset')
 
@@ -348,83 +422,18 @@ def main():
     parser.add_argument('--optimizer', type=str, default="Adam",  
                         help='The options are \"Adam\"\, \"SGD\"\, \"RMSprop\"\, \"AdamW\"\n'
                         'Please update relevant parameters in parameters file.') 
-    
-    # set device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(device)
+    parser.add_argument('--nproc', default=torch.cuda.device_count(), type=int, help='nproc, default is the number of available gpus on the machine')
+
     # Parse arguments
     args = parser.parse_args()
 
-    #hparams = set_hparams(args.config_mode)
-    DEBUG = hparams.DEBUG
+    # rank is the device
+    world_size = args.nproc
 
-    if DEBUG ==  True:
-        args = set_debug_data(args)
-
-    args = update_suffix(args, DEBUG)
-    wandb_flag, comp_baseline_folders = init(args)
-    # Initialize model and optimizer
-    model = get_model(args)
-    optimizer = set_optimizer(args, model)
-    scheduler = set_scheduler(args.scheduler, optimizer, args.epochs)
-    # print and save model
-    print_model_summary(args, model)
-
-    # set train dataset and dataloader
-    
-    read_baseline_train = True if args.read_baseline == 1 else False
-    train_dataset = create_dataset(device, args.train_data_size, args.N,
-                                   read_baseline_train, args.mode,
-                                   comp_baseline_folders)
-
-    train_loader = prepare_data_loader(train_dataset, args)
-    # set validation dataset and dataloader 
-    read_baseline_val = True if args.read_baseline == 2 else False
-    val_dataset = create_dataset(device, args.val_data_size, args.N,
-                                 read_baseline_val, args.mode,
-                                 comp_baseline_folders)
-    val_loader = prepare_data_loader(val_dataset, args)
-    # Initialize trainer
-    trainer = Trainer(model=model, 
-                      train_loader=train_loader, 
-                      val_loader=val_loader, 
-                      train_dataset=train_dataset, 
-                      val_dataset=val_dataset, 
-                      wandb_flag=wandb_flag,
-                      device=device,
-                      optimizer=optimizer,
-                      scheduler=scheduler,
-                      scheduler_name=args.scheduler,
-                      comp_baseline_folders=comp_baseline_folders,
-                      args=args)
-    
-    start_time = time.time()
-    run = None
-    if wandb_flag:
-        wandb.login()
-        run = wandb.init(project='GaussianBispectrumInversion',
-                           name = f"{args.suffix}",
-                           config=args)
-        wandb.log({"cmd_line": sys.argv})
-        wandb.save('hparams.py')
-        wandb.save("train_main.py")
-        wandb.save(f"model{args.model}.py")        
-        wandb.watch(model, log_freq=100)
-    # Train and evaluate
-    trainer.run()
-    if wandb_flag:
-        folder = f'figures/cnn_{args.suffix}'
-        fig_path = f'{folder}/x_vs_x_rec.png'
-        #wandb.upload_file(fig_path, f"x_vs_x_rec_ep{args.epochs - 1}.png")
-        artifact = wandb.Artifact("x_vs_x_rec", type="figure")
-        artifact.add_file(fig_path, 
-                          name=f"x_vs_x_rec.png")
-        run.log_artifact(artifact)
-    end_time = time.time()
+    if args.batch_size is None:
+        args.batch_size = int(args.num_imgs / world_size)
         
-    print(f"Time taken to train in {os.path.basename(__file__)}:", 
-          end_time - start_time, "seconds")
+    # Otherwise value is set as the user provided
+    mp.spawn(main, args=(args,), nprocs=world_size)
+            
 
-
-if __name__ == "__main__":
-    main()
