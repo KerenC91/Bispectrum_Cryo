@@ -25,6 +25,7 @@ class Trainer:
                  comp_baseline_folders,
                  args):
         self.device = device 
+        self.nprocs = args.nprocs
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.train_dataset=train_dataset
@@ -36,8 +37,9 @@ class Trainer:
         self.val_data_size = args.val_data_size
         self.target_len = args.N
         self.save_every = args.save_every
-        self.model = model.to(self.device)
-        self.model = DDP(model, device_ids=[device], find_unused_parameters=True)
+        self.model = model.to(device)
+        self.model = DDP(self.model, device_ids=[self.device], 
+                         find_unused_parameters=True)
         self.wandb_flag = wandb_flag
         self.normalize = args.normalize
         self.mode = args.mode
@@ -294,12 +296,15 @@ class Trainer:
         # Move data to device
         target = target.to(self.device)
         source = source.to(self.device)
+
         # Forward pass
         output = self.model(source) # reconstructed signal
         self.last_output = output
         self.last_target = target
         # Loss calculation
+
         loss = self.loss_f(output, target)
+
         return loss
         
     def _run_batch_rand(self):
@@ -373,7 +378,14 @@ class Trainer:
         total_mse_loss = 0
         total_mse_norm_loss = 0
         
+        b_sz = len(next(iter(self.train_loader))[0])
+        
+        #print(f'GPU{self.device}: b_sz={b_sz}')
         for idx, (sources, targets) in self.train_loader:
+            # print(f'GPU{self.device}: sources.shape={sources.shape}')
+            # print(f'GPU{self.device}: targets.shape={targets.shape}')
+            # print(f'GPU{self.device}: idx={idx}')
+
             # zero grads
             self.optimizer.zero_grad()
             # forward pass + loss computation
@@ -430,10 +442,10 @@ class Trainer:
             # optimizer step
             self.optimizer.step()
             # update avg loss 
-            total_loss += loss.item()
+            total_loss += loss
             if self.loss_mode == 'all':
-                total_mse_loss += mse_loss.item()
-                total_mse_norm_loss += rel_mse_loss.item()
+                total_mse_loss += mse_loss
+                total_mse_norm_loss += rel_mse_loss
             
         avg_loss = total_loss / self.train_data_size
 
@@ -473,7 +485,7 @@ class Trainer:
                 if self.loss_mode == 'all':
                     loss, _, _ = loss
                 # update avg loss 
-                total_loss += loss.item()
+                total_loss += loss
                 
         avg_loss = total_loss / self.val_data_size
         
@@ -564,17 +576,18 @@ class Trainer:
                 train_loss, train_mse_loss, train_rel_mse_loss = train_loss
                 val_loss, val_mse_loss, val_rel_mse_loss = val_loss
                 # Get loss from all processes
-                all_reduce(train_loss, op=dist.ReduceOp.AVG)
-                all_reduce(train_mse_loss, op=dist.ReduceOp.AVG)
-                all_reduce(train_rel_mse_loss, op=dist.ReduceOp.AVG)
+                all_reduce(train_loss, op=dist.ReduceOp.SUM)
+                all_reduce(train_mse_loss, op=dist.ReduceOp.SUM)
+                all_reduce(train_rel_mse_loss, op=dist.ReduceOp.SUM)
                 
-                all_reduce(val_loss, op=dist.ReduceOp.AVG)
-                all_reduce(val_mse_loss, op=dist.ReduceOp.AVG)
-                all_reduce(val_rel_mse_loss, op=dist.ReduceOp.AVG)
+                all_reduce(val_loss, op=dist.ReduceOp.SUM)
+                all_reduce(val_mse_loss, op=dist.ReduceOp.SUM)
+                all_reduce(val_rel_mse_loss, op=dist.ReduceOp.SUM)
             else:
                 # Get loss from all processes
-                all_reduce(train_loss, op=dist.ReduceOp.AVG)
-                all_reduce(val_loss, op=dist.ReduceOp.AVG) 
+                all_reduce(train_loss, op=dist.ReduceOp.SUM)
+                all_reduce(val_loss, op=dist.ReduceOp.SUM) 
+
                 
             # update lr            
             if self.scheduler_name != 'None':
@@ -588,6 +601,20 @@ class Trainer:
                     self.scheduler.step()
             # Only gpu 0 operating now...
             if self.device == 0: 
+                # update losses
+                if self.loss_mode == 'all':
+                    # Get loss from all processes
+                    train_loss /= self.nprocs
+                    train_mse_loss /= self.nprocs
+                    train_rel_mse_loss /= self.nprocs
+                    
+                    val_loss /= self.nprocs
+                    val_mse_loss /= self.nprocs
+                    val_rel_mse_loss /= self.nprocs
+                else:
+                    # Get loss from all processes
+                    train_loss /= self.nprocs
+                    val_loss /= self.nprocs
                 # log loss with wandb
                 if self.wandb_flag and self.epoch % self.wandb_log_interval == 0:
                     wandb.log({"train_loss_l1": train_loss.item()})

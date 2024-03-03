@@ -23,8 +23,7 @@ import torch.distributed as dist
 # Set the same seed for reproducibility
 #torch.manual_seed(1234)
 
-IDLE_GPU = 1
-os.environ["CUDA_VISIBLE_DEVICES"] = "1, 2, 3"
+#os.environ["CUDA_VISIBLE_DEVICES"] = "1, 2, 3"
 
 
 class UnitVecDataset(Dataset):
@@ -197,7 +196,7 @@ def init(args):
 
 def set_optimizer(args, model):
     
-    lr = args.lr * args.nproc
+    lr = args.lr * args.nprocs
     if args.optimizer == 'SGD':
         optimizer = torch.optim.SGD(model.parameters(), lr=lr,
                                     momentum=hparams.opt_sgd_momentum,
@@ -262,7 +261,7 @@ def update_suffix(args):
 
 def ddp_setup(rank, world_size):
     os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "12532" #any free port
+    os.environ["MASTER_PORT"] = "12355" #any free port
     init_process_group(backend="nccl", rank=rank, world_size=world_size)
     torch.cuda.set_device(rank)
 
@@ -270,7 +269,7 @@ def ddp_setup(rank, world_size):
 def main(device, args):
     
     # Apply ddp setup
-    ddp_setup(device, args.nproc)
+    ddp_setup(device, args.nprocs)
     
     if torch.cuda.is_available():
         print("GPU available!")
@@ -303,6 +302,7 @@ def main(device, args):
                                  comp_baseline_folders)
     val_loader = prepare_data_loader(val_dataset, args)
     # Initialize trainer
+
     trainer = Trainer(model=model, 
                       train_loader=train_loader, 
                       val_loader=val_loader, 
@@ -317,10 +317,10 @@ def main(device, args):
                       args=args)
  
     # Get start time
-    if trainer.device not in [-1, IDLE_GPU]:
+    if trainer.device not in [-1, 0]:
         dist.barrier()
     # Only gpu 0 operating now...
-    if trainer.device == IDLE_GPU:
+    if trainer.device == 0:
         start_time = time.time()
         run = None
         if wandb_flag:
@@ -333,13 +333,14 @@ def main(device, args):
             wandb.save("train_main.py")
             wandb.save(f"model{args.model}.py")        
             wandb.watch(model, log_freq=100)
+        dist.barrier()
     # Train and evaluate
     trainer.run()
     # Get end time 
-    if trainer.device not in [-1, IDLE_GPU]:
+    if trainer.device not in [-1, 0]:
         dist.barrier()
-    if trainer.device == IDLE_GPU:
-        # Only gpu IDLE_GPU operating now...        
+    if trainer.device == 0:
+        # Only gpu 0 operating now...        
         if wandb_flag:
             folder = f'figures/cnn_{args.suffix}'
             fig_path = f'{folder}/x_vs_x_rec.png'
@@ -351,7 +352,8 @@ def main(device, args):
         
         print(f"Time taken to train in {os.path.basename(__file__)}:", 
               end_time - start_time, "seconds")
-
+        dist.barrier()
+        
     destroy_process_group()          
 
 if __name__ == "__main__":
@@ -422,18 +424,15 @@ if __name__ == "__main__":
     parser.add_argument('--optimizer', type=str, default="Adam",  
                         help='The options are \"Adam\"\, \"SGD\"\, \"RMSprop\"\, \"AdamW\"\n'
                         'Please update relevant parameters in parameters file.') 
-    parser.add_argument('--nproc', default=torch.cuda.device_count(), type=int, help='nproc, default is the number of available gpus on the machine')
+    parser.add_argument('--nprocs', default=torch.cuda.device_count(), type=int, help='nprocs, default is the number of available gpus on the machine')
 
     # Parse arguments
     args = parser.parse_args()
 
-    # rank is the device
-    world_size = args.nproc
-
-    if args.batch_size is None:
-        args.batch_size = int(args.num_imgs / world_size)
-        
+    # if args.batch_size is None:
+    #     args.batch_size = int(args.num_imgs / args.nprocs)
+    args.batch_size *= args.nprocs    
     # Otherwise value is set as the user provided
-    mp.spawn(main, args=(args,), nprocs=world_size)
+    mp.spawn(main, args=(args,), nprocs=args.nprocs)
             
 
