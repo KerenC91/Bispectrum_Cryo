@@ -431,7 +431,7 @@ if __name__ == "__main__":
 
     # if args.batch_size is None:
     #     args.batch_size = int(args.num_imgs / args.nprocs)
-    args.batch_size *= args.nprocs    
+    #args.batch_size *= args.nprocs    
     # Otherwise value is set as the user provided
     mp.spawn(main, args=(args,), nprocs=args.nprocs)
             
