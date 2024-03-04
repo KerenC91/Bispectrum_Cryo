@@ -58,7 +58,7 @@ class Trainer:
             self.loss_f = self._loss_all
         else:
             self.loss_f = self._loss
-        self.bs_calc = BispectrumCalculator(self.batch_size, self.target_len, self.device).to(self.device)
+        self.bs_calc = BispectrumCalculator(self.target_len, self.device).to(self.device)
         self.folder_test, self.folder_matlab, self.folder_python = \
                         comp_baseline_folders
     
@@ -380,7 +380,7 @@ class Trainer:
         
         b_sz = len(next(iter(self.train_loader))[0])
         
-        #print(f'GPU{self.device}: b_sz={b_sz}')
+        # print(f'GPU{self.device}: b_sz={b_sz}')
         for idx, (sources, targets) in self.train_loader:
             # print(f'GPU{self.device}: sources.shape={sources.shape}')
             # print(f'GPU{self.device}: targets.shape={targets.shape}')
