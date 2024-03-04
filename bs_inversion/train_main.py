@@ -271,10 +271,11 @@ def main(device, args):
     # Apply ddp setup
     ddp_setup(device, args.nprocs)
     
-    if torch.cuda.is_available():
-        print("GPU available!")
-    else:
-        print("GPU not available, using CPU.")
+    if device == 0:
+        if torch.cuda.is_available():
+            print("GPU available!")
+        else:
+            print("GPU not available, using CPU.")
     print(f'Using GPU {device}')
     
     args = update_suffix(args)
@@ -284,8 +285,9 @@ def main(device, args):
     model = get_model(device, args)
     optimizer = set_optimizer(args, model)
     scheduler = set_scheduler(args.scheduler, optimizer, args.epochs)
-    # print and save model
-    print_model_summary(args, model)
+    if device == 0:
+        # print and save model
+        print_model_summary(args, model)
 
     # set train dataset and dataloader
     

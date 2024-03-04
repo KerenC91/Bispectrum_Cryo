@@ -6,6 +6,12 @@ import torch
 class HParams:
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
+    def __str__(self):
+      """Defines a string representation of the HParams object."""
+      param_strings = []
+      for attr, value in self.__dict__.items():
+        param_strings.append(f"{attr}: {value}")
+      return ", ".join(param_strings)
 
 # Example usage:
 hparams = HParams(
@@ -109,9 +115,9 @@ hparams = HParams(
     reduce_height = [4, 3, 3], # RELEVANT FOR MODEL2 ONLY
                     #relevant only for model2 - [count kernel stride]
                     #for reducing height in tensor: BXCXHXW to BXCX1XW
-    pre_residuals = 11, 
-    up_residuals = 3,    
-    post_residuals = 14,
+    pre_residuals = 1,#11, 
+    up_residuals = 1,#3,    
+    post_residuals = 1,#14,
     activation = 'LeakyReLU',
     ##########################
     # additional params
