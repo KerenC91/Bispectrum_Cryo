@@ -135,10 +135,9 @@ def clculate_bispectrum_efficient(y, shifted=True):
 
 
 class BispectrumCalculator(nn.Module):
-    def __init__(self, batch_size, target_len, device):
+    def __init__(self, target_len, device):
         super().__init__()
         self.calculator = calculate_bispectrum_power_spectrum_efficient
-        self.batch_size = batch_size
         self.target_len = target_len
         self.device = device
         self.channels = 2
@@ -157,9 +156,10 @@ class BispectrumCalculator(nn.Module):
     # target: signal 1Xtarget_len
     # source: bs     2Xtarget_lenXtarget_len
     def forward(self, target):
+        batch_size = target.shape[0]
         # Iterate over the batch dimension using indexing
-        source = torch.zeros(self.batch_size, self.channels, self.height, self.width).to(self.device)
-
-        for i in range(self.batch_size):
+        source = torch.zeros(batch_size, self.channels, self.height, self.width).to(self.device)
+        
+        for i in range(batch_size):
             source[i], target[i] = self._create_data(target[i])
         return source, target  # Stack processed vectors

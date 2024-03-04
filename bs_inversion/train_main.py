@@ -63,7 +63,7 @@ def set_read_func(folder_matlab):
 
 def create_dataset(device, data_size, N, read_baseline, mode, 
                    comp_baseline_folders):
-    bs_calc = BispectrumCalculator(data_size, N, device).to(device)
+    bs_calc = BispectrumCalculator(N, device).to(device)
     if read_baseline:
         target = torch.zeros(data_size, 1, N)
         if mode == 'opt':

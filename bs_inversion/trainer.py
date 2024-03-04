@@ -52,7 +52,7 @@ class Trainer:
             self.loss_f = self._loss_all
         else:
             self.loss_f = self._loss
-        self.bs_calc = BispectrumCalculator(self.batch_size, self.target_len, self.device).to(self.device)
+        self.bs_calc = BispectrumCalculator(self.target_len, self.device).to(self.device)
         self.folder_test, self.folder_matlab, self.folder_python = \
                         comp_baseline_folders
     
