@@ -12,7 +12,7 @@ hparams = HParams(
     #####################################
     # debug parameters
     #####################################
-    DEBUG = True,
+    DEBUG = False,
     debug_model = 3,
     debug_N = 100,
     debug_last_ch = 256,# 8 for 1, 2,
