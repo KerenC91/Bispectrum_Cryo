@@ -6,7 +6,12 @@ import torch
 class HParams:
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
-
+    def __str__(self):
+        """Defines a string representation of the HParams object."""
+        param_strings = []
+        for attr, value in self.__dict__.items():
+            param_strings.append(f"{attr}: {value}")
+        return ", ".join(param_strings)
 # Example usage:
 hparams = HParams(
     #####################################
