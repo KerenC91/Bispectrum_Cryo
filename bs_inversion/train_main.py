@@ -67,27 +67,26 @@ def create_dataset(device, data_size, N, read_baseline, mode,
                    comp_baseline_folders):
     device='cpu'
     bs_calc = BispectrumCalculator(N, device).to(device)
-    if read_baseline:
+    if read_baseline: # in val dataset
         target = torch.zeros(data_size, 1, N)
-        if mode == 'opt':
-            _, folder_matlab, _ = \
-                    comp_baseline_folders
-            data_size = min(data_size, len(os.listdir(folder_matlab)))
-            print(f'data_size={data_size}')
+    
+        _, folder_matlab, _ = \
+                comp_baseline_folders
+        data_size = min(data_size, len(os.listdir(folder_matlab)))
+        #print(f'data_size={data_size}')
 
-            for i in range(data_size):
+        for i in range(data_size):
 
-                folder = os.path.join(folder_matlab, f'sample{i}')
-                read_func = set_read_func(folder_matlab)
-                
-                target[i] = read_func(folder)
-  
-        else:
-            print('Error! read data from baseline mode is only possible for '
-                  '\'opt\' mode. Please check your parameters.')
-            sys.exit(1)
+            folder = os.path.join(folder_matlab, f'sample{i}')
+            read_func = set_read_func(folder_matlab)
+            
+            target[i] = read_func(folder)
+
     else:
-        target = torch.randn(data_size, 1, N)
+        if mode == 'opt':
+            target = torch.randn(data_size, 1, N)
+        elif mode == 'rand':
+            target = torch.zeros(data_size, 1, N)
     target.to(device)
     source, target = bs_calc(target)
 
@@ -274,6 +273,9 @@ def main(device, args):
     if device == 0:
         if torch.cuda.is_available():
             print("GPU available!")
+            
+            # print("\nCUDA Memory Summary (High-Level):")
+            # torch.cuda.memory_summary(device=device, abbreviated=True)
         else:
             print("GPU not available, using CPU.")
     print(f'Using GPU {device}')
@@ -287,7 +289,8 @@ def main(device, args):
     scheduler = set_scheduler(args.scheduler, optimizer, args.epochs)
     if device == 0:
         # print and save model
-        print_model_summary(args, model)
+        if args.log_level >= 2:
+            print_model_summary(args, model)
 
     # set train dataset and dataloader
     
@@ -393,6 +396,9 @@ if __name__ == "__main__":
             help='test name') 
     parser.add_argument('--comp_test_name_m', type=str, default='',
             help='test name matlab') 
+    parser.add_argument('--log_level', type=int, default=0, 
+                        help='0: info, 1: warning, '
+                        '2: debug, 3: detailed debug')
     ##---- model parameters
     parser.add_argument('--n_heads', type=int, default=1, 
                     help='number of cnn heads')

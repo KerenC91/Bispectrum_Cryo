@@ -9,7 +9,8 @@ from torch.utils.data import DataLoader
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
 from torch.distributed import init_process_group, destroy_process_group, all_reduce
-
+import gc
+import sys
 
 class Trainer:
     def __init__(self, model, 
@@ -61,7 +62,14 @@ class Trainer:
         self.bs_calc = BispectrumCalculator(self.target_len, self.device).to(self.device)
         self.folder_test, self.folder_matlab, self.folder_python = \
                         comp_baseline_folders
-    
+        if self.mode == 'opt':
+            self.run_batch_f = self._run_batch
+        elif self.mode == 'rand': 
+            self.run_batch_f = self._run_batch_rand
+        else:
+            print(f'error, no such mode {self.mode}')
+            sys.exit(1)
+            
     def _loss(self, pred, target):
         bs_pred, _ = self.bs_calc(pred)
         bs_target, _ = self.bs_calc(target)
@@ -308,14 +316,8 @@ class Trainer:
         return loss
         
     def _run_batch_rand(self):
-        if self.mode == 'rand':
-            target = torch.randn(self.batch_size, 1, self.target_len)
-
-            source, target = self.bs_calc(target)
-        elif self.mode == 'opt':
-            source, target = self.source, self.target
-        else:
-            print(f'error! unknown mode {self.mode}')
+        target = torch.randn(self.batch_size, 1, self.target_len)
+        source, target = self.bs_calc(target)
         # Move data to device
         target = target.to(self.device)
         source = source.to(self.device)
@@ -361,7 +363,7 @@ class Trainer:
             # zero grads
             self.optimizer.zero_grad()
             # forward pass + loss computation
-            loss = self._run_batch(sources, targets)
+            loss = self.run_batch_f(sources, targets)
             # backward pass
             loss.backward()
             # optimizer step
@@ -389,15 +391,17 @@ class Trainer:
             # zero grads
             self.optimizer.zero_grad()
             # forward pass + loss computation
-            loss, mse_loss, rel_mse_loss = self._run_batch(sources, targets)
+            loss, mse_loss, rel_mse_loss = self.run_batch_f(sources, targets)
             # backward pass
             loss.backward()
             # optimizer step
             self.optimizer.step()
+            torch.cuda.empty_cache()
             # update avg loss 
             total_loss += loss
             total_mse_loss += mse_loss
             total_mse_norm_loss += rel_mse_loss
+            del sources, targets, loss
             
         avg_loss = total_loss / len(self.train_loader)
         avg_mse_loss = total_mse_loss / len(self.train_loader) 
@@ -412,11 +416,12 @@ class Trainer:
         
         for idx, (sources, targets) in self.train_loader:
             # forward pass + loss computation
-            loss, mse_loss, rel_mse_loss = self._run_batch(sources, targets)
+            loss, mse_loss, rel_mse_loss = self.run_batch_f(sources, targets)
             # update avg loss 
             total_loss += loss
             total_mse_loss += mse_loss
             total_mse_norm_loss += rel_mse_loss
+            del sources, targets, loss
             
         avg_loss = total_loss / len(self.val_loader)
         avg_mse_loss = total_mse_loss / len(self.val_loader) 
@@ -425,37 +430,7 @@ class Trainer:
         return avg_loss, avg_mse_loss, avg_mse_norm_loss 
     
     
-    def _run_epoch_train_rand(self):
-        total_loss = 0
-        total_mse_loss = 0
-        total_mse_norm_loss = 0
-        
-        for _ in range(self.train_data_size):
-            # zero grads
-            self.optimizer.zero_grad()
-            # forward pass + loss computation
-            loss = self._run_batch_rand()
-            if self.loss_mode == 'all':
-                loss, mse_loss, rel_mse_loss = loss
-            # backward pass
-            loss.backward()
-            # optimizer step
-            self.optimizer.step()
-            # update avg loss 
-            total_loss += loss
-            if self.loss_mode == 'all':
-                total_mse_loss += mse_loss
-                total_mse_norm_loss += rel_mse_loss
-            
-        avg_loss = total_loss / self.train_data_size
 
-        if self.loss_mode == 'all':
-            avg_mse_loss = total_mse_loss / self.train_data_size 
-            avg_mse_norm_loss = total_mse_norm_loss / self.train_data_size 
-            
-            avg_loss = avg_loss, avg_mse_loss, avg_mse_norm_loss
-        
-        return avg_loss
     
     def _run_epoch_validate(self):
         total_loss = 0
@@ -465,7 +440,7 @@ class Trainer:
             nof_samples += 1
             with torch.no_grad():
                 # forward pass + loss computation
-                loss = self._run_batch(sources, targets)
+                loss = self.run_batch_f(sources, targets)
                 # update avg loss 
                 total_loss += loss
             
@@ -473,24 +448,7 @@ class Trainer:
             
         return avg_loss
     
-    def _run_epoch_validate_rand(self):
-        total_loss = 0
-        nof_samples = 0
-        
-        for _ in range(self.val_data_size):
-            nof_samples += 1
-            with torch.no_grad():
-                # forward pass + loss computation
-                loss = self._run_batch_rand()
-                if self.loss_mode == 'all':
-                    loss, _, _ = loss
-                # update avg loss 
-                total_loss += loss
-                
-        avg_loss = total_loss / self.val_data_size
-        
-        return avg_loss
-    
+
     # one epoch of training           
     def train(self):
         # Set the model to training mode
@@ -564,31 +522,17 @@ class Trainer:
         
     def run(self):
         for self.epoch in range(self.epochs):
-            # train             
+            # print(torch.cuda.memory_summary(device=self.device, abbreviated=False))
+            # print(torch.cuda.memory_stats(device=self.device))
+            # train            
+            torch.cuda.empty_cache()
             self.train_loader.sampler.set_epoch(self.epoch)
             train_loss = self.train()
             # validate
+            torch.cuda.empty_cache()
             self.val_loader.sampler.set_epoch(self.epoch)
             val_loss = self.validate()
-
-
-            if self.loss_mode == 'all':
-                train_loss, train_mse_loss, train_rel_mse_loss = train_loss
-                val_loss, val_mse_loss, val_rel_mse_loss = val_loss
-                # Get loss from all processes
-                all_reduce(train_loss, op=dist.ReduceOp.SUM)
-                all_reduce(train_mse_loss, op=dist.ReduceOp.SUM)
-                all_reduce(train_rel_mse_loss, op=dist.ReduceOp.SUM)
-                
-                all_reduce(val_loss, op=dist.ReduceOp.SUM)
-                all_reduce(val_mse_loss, op=dist.ReduceOp.SUM)
-                all_reduce(val_rel_mse_loss, op=dist.ReduceOp.SUM)
-            else:
-                # Get loss from all processes
-                all_reduce(train_loss, op=dist.ReduceOp.SUM)
-                all_reduce(val_loss, op=dist.ReduceOp.SUM) 
-
-                
+               
             # update lr            
             if self.scheduler_name != 'None':
                 last_lr = self.optimizer.param_groups[0]['lr']
@@ -599,6 +543,24 @@ class Trainer:
                     self.scheduler.step(train_loss)
                 elif self.scheduler_name == 'StepLR':
                     self.scheduler.step()
+
+            if self.epoch % self.save_every == 0:
+                if self.loss_mode == 'all':
+                    train_loss, train_mse_loss, train_rel_mse_loss = train_loss
+                    val_loss, val_mse_loss, val_rel_mse_loss = val_loss
+                    # Get loss from all processes
+                    all_reduce(train_loss, op=dist.ReduceOp.SUM)
+                    all_reduce(train_mse_loss, op=dist.ReduceOp.SUM)
+                    all_reduce(train_rel_mse_loss, op=dist.ReduceOp.SUM)
+                    
+                    all_reduce(val_loss, op=dist.ReduceOp.SUM)
+                    all_reduce(val_mse_loss, op=dist.ReduceOp.SUM)
+                    all_reduce(val_rel_mse_loss, op=dist.ReduceOp.SUM)
+                else:
+                    # Get loss from all processes
+                    all_reduce(train_loss, op=dist.ReduceOp.SUM)
+                    all_reduce(val_loss, op=dist.ReduceOp.SUM) 
+                    
             # Only gpu 0 operating now...
             if self.device == 0: 
                 # update losses
@@ -616,7 +578,7 @@ class Trainer:
                     train_loss /= self.nprocs
                     val_loss /= self.nprocs
                 # log loss with wandb
-                if self.wandb_flag and self.epoch % self.wandb_log_interval == 0:
+                if self.wandb_flag and self.epoch % self.save_every == 0:
                     wandb.log({"train_loss_l1": train_loss.item()})
                     wandb.log({"val_loss_l1": val_loss.item()})
                     wandb.log({"lr": self.optimizer.param_groups[0]['lr']})
