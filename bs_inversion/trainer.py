@@ -399,8 +399,8 @@ class Trainer:
             torch.cuda.empty_cache()
             # update avg loss 
             total_loss += loss
-            total_mse_loss += mse_loss
-            total_mse_norm_loss += rel_mse_loss
+            total_mse_loss += mse_loss.item()
+            total_mse_norm_loss += rel_mse_loss.item()
             del sources, targets, loss
             
         avg_loss = total_loss / len(self.train_loader)
@@ -419,8 +419,8 @@ class Trainer:
             loss, mse_loss, rel_mse_loss = self.run_batch_f(sources, targets)
             # update avg loss 
             total_loss += loss
-            total_mse_loss += mse_loss
-            total_mse_norm_loss += rel_mse_loss
+            total_mse_loss += mse_loss.item()
+            total_mse_norm_loss += rel_mse_loss.item()
             del sources, targets, loss
             
         avg_loss = total_loss / len(self.val_loader)
@@ -532,7 +532,11 @@ class Trainer:
             torch.cuda.empty_cache()
             self.val_loader.sampler.set_epoch(self.epoch)
             val_loss = self.validate()
-               
+              
+            if self.loss_mode == 'all':
+                train_loss, train_mse_loss, train_rel_mse_loss = train_loss
+                val_loss, val_mse_loss, val_rel_mse_loss = val_loss
+       
             # update lr            
             if self.scheduler_name != 'None':
                 last_lr = self.optimizer.param_groups[0]['lr']
@@ -545,58 +549,36 @@ class Trainer:
                     self.scheduler.step()
 
             if self.epoch % self.save_every == 0:
-                if self.loss_mode == 'all':
-                    train_loss, train_mse_loss, train_rel_mse_loss = train_loss
-                    val_loss, val_mse_loss, val_rel_mse_loss = val_loss
-                    # Get loss from all processes
-                    all_reduce(train_loss, op=dist.ReduceOp.SUM)
-                    all_reduce(train_mse_loss, op=dist.ReduceOp.SUM)
-                    all_reduce(train_rel_mse_loss, op=dist.ReduceOp.SUM)
-                    
-                    all_reduce(val_loss, op=dist.ReduceOp.SUM)
-                    all_reduce(val_mse_loss, op=dist.ReduceOp.SUM)
-                    all_reduce(val_rel_mse_loss, op=dist.ReduceOp.SUM)
-                else:
-                    # Get loss from all processes
-                    all_reduce(train_loss, op=dist.ReduceOp.SUM)
-                    all_reduce(val_loss, op=dist.ReduceOp.SUM) 
+                # Get loss from all processes
+                all_reduce(train_loss, op=dist.ReduceOp.SUM)
+                all_reduce(val_loss, op=dist.ReduceOp.SUM) 
                     
             # Only gpu 0 operating now...
             if self.device == 0: 
                 # update losses
-                if self.loss_mode == 'all':
-                    # Get loss from all processes
-                    train_loss /= self.nprocs
-                    train_mse_loss /= self.nprocs
-                    train_rel_mse_loss /= self.nprocs
-                    
-                    val_loss /= self.nprocs
-                    val_mse_loss /= self.nprocs
-                    val_rel_mse_loss /= self.nprocs
-                else:
-                    # Get loss from all processes
-                    train_loss /= self.nprocs
-                    val_loss /= self.nprocs
+                # Get loss from all processes
+                train_loss /= self.nprocs
+                val_loss /= self.nprocs
                 # log loss with wandb
                 if self.wandb_flag and self.epoch % self.save_every == 0:
                     wandb.log({"train_loss_l1": train_loss.item()})
                     wandb.log({"val_loss_l1": val_loss.item()})
                     wandb.log({"lr": self.optimizer.param_groups[0]['lr']})
                     if self.loss_mode == 'all':
-                        wandb.log({"train mse": train_mse_loss.item()})
-                        wandb.log({"train relative mse": train_rel_mse_loss.item()})
-                        wandb.log({"val mse": val_mse_loss.item()})
-                        wandb.log({"val relative mse": val_rel_mse_loss.item()})
+                        wandb.log({"train mse": train_mse_loss})
+                        wandb.log({"train relative mse": train_rel_mse_loss})
+                        wandb.log({"val mse": val_mse_loss})
+                        wandb.log({"val relative mse": val_rel_mse_loss})
                 # save checkpoint and log loss to cmd 
                 if self.epoch % self.save_every == 0:
                     print(f'-------Epoch {self.epoch}/{self.epochs}-------')
                     print(f'Train loss l1: {train_loss.item():.6f}')
                     print(f'Validation loss l1: {val_loss.item():.6f}')
                     if self.loss_mode == 'all':
-                        print(f'train mse loss: {train_mse_loss.item():.6f}')
-                        print(f'train relative mse loss: {train_rel_mse_loss.item():.6f}')
-                        print(f'val mse loss: {val_mse_loss.item():.6f}')
-                        print(f'val relative mse loss: {val_rel_mse_loss.item():.6f}')
+                        print(f'train mse loss: {train_mse_loss:.6f}')
+                        print(f'train relative mse loss: {train_rel_mse_loss:.6f}')
+                        print(f'val mse loss: {val_mse_loss:.6f}')
+                        print(f'val relative mse loss: {val_rel_mse_loss:.6f}')
                     if self.scheduler_name != 'None':
                         print(f'lr: {last_lr}')
                     # save checkpoint
