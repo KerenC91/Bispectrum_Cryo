@@ -144,16 +144,14 @@ def get_model(device, args):
     return model   
     
 def prepare_data_loader(dataset, args):
-    dataloader = None
     
-    if args.mode =='opt':
-        dataloader = DataLoader(
+    dataloader = DataLoader(
         dataset=dataset,
         batch_size=args.batch_size,
         pin_memory=True,
         shuffle=False,
         sampler=DistributedSampler(dataset)
-    )
+        )
     
     return dataloader
 
@@ -167,8 +165,7 @@ def print_model_summary(args, model):
 def init(args):
     # Set wandb flag
     wandb_flag = args.wandb
-    if (args.wandb_log_interval == 0):
-        wandb_flag = False
+
     if args.read_baseline:
         folder_test = os.path.join(hparams.comp_root, args.comp_test_name)
         if not os.path.exists(folder_test):
@@ -207,7 +204,7 @@ def set_optimizer(args, model):
     elif args.optimizer == 'AdamW':
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr,
                                       betas=hparams.opt_adam_w_betas,
-                                      eps=hparams.opt_eps,
+                                      eps=hparams.opt_adam_w_eps,
                                       weight_decay=hparams.opt_adam_w_weight_decay)
     else: # Adam
         optimizer = torch.optim.Adam(model.parameters(), lr=lr,
@@ -330,7 +327,7 @@ def main(device, args):
         run = None
         if wandb_flag:
             wandb.login()
-            run = wandb.init(project='GaussianBispectrumInversion',
+            run = wandb.init(project=args.wandb_proj_name,
                                name = f"{args.suffix}",
                                config=args)
             wandb.log({"cmd_line": sys.argv})
@@ -358,7 +355,7 @@ def main(device, args):
         print(f"Time taken to train in {os.path.basename(__file__)}:", 
               end_time - start_time, "seconds")
         dist.barrier()
-        
+    
     destroy_process_group()          
 
 if __name__ == "__main__":
@@ -369,8 +366,8 @@ if __name__ == "__main__":
             help='size of vector in the dataset')
     parser.add_argument('--batch_size', type=int, default=1, metavar='N',
             help='batch size')
-    parser.add_argument('--wandb_log_interval', type=int, default=10, metavar='N',
-            help='interval to log data to wandb')
+    parser.add_argument('--wandb_proj_name', type=str, default='GaussianBispectrumInversion', metavar='N',
+            help='wandb project name')
     parser.add_argument('--save_every', type=int, default=100, metavar='N',
             help='save checkpoint every <save_every> epoch')
     parser.add_argument('--epochs', type=int, default=5000, metavar='N',

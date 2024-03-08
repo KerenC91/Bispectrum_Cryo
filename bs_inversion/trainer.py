@@ -33,7 +33,6 @@ class Trainer:
         self.val_dataset=val_dataset
         self.batch_size = args.batch_size
         self.epochs = args.epochs
-        self.wandb_log_interval = args.wandb_log_interval
         self.train_data_size = args.train_data_size
         self.val_data_size = args.val_data_size
         self.target_len = args.N
@@ -62,13 +61,7 @@ class Trainer:
         self.bs_calc = BispectrumCalculator(self.target_len, self.device).to(self.device)
         self.folder_test, self.folder_matlab, self.folder_python = \
                         comp_baseline_folders
-        if self.mode == 'opt':
-            self.run_batch_f = self._run_batch
-        elif self.mode == 'rand': 
-            self.run_batch_f = self._run_batch_rand
-        else:
-            print(f'error, no such mode {self.mode}')
-            sys.exit(1)
+
             
     def _loss(self, pred, target):
         bs_pred, _ = self.bs_calc(pred)
@@ -93,26 +86,26 @@ class Trainer:
         return total_loss
 
     def _loss_all(self, pred, target):
-        bs_pred, pred = self.bs_calc(pred)
-        bs_target, target = self.bs_calc(target)
-        total_loss = 0.
-        if hparams.f1 != 0:
-            loss_sc = self._loss_sc(bs_pred, bs_target)
-            total_loss += hparams.f1 * loss_sc
-        if hparams.f2 != 0:
-            loss_log_sc = self._loss_log_sc(bs_pred, bs_target) 
-            total_loss += hparams.f2 * loss_log_sc
-        if hparams.f3 != 0:
-            loss_freq = self._loss_freq(bs_pred, bs_target)
-            total_loss += hparams.f3 * loss_freq
-        if hparams.f4 != 0:
-            loss_weighted_phase = self._loss_weighted_phase(bs_pred, bs_target)
-            total_loss += hparams.f4 * loss_weighted_phase
-        if hparams.f5 != 0:
-            loss_l1 = self._loss_l1(pred, target)
-            total_loss += hparams.f5 * loss_l1
+        # bs_pred, pred = self.bs_calc(pred)
+        # bs_target, target = self.bs_calc(target)
+        # total_loss = 0.
+        # if hparams.f1 != 0:
+        #     loss_sc = self._loss_sc(bs_pred, bs_target)
+        #     total_loss += hparams.f1 * loss_sc
+        # if hparams.f2 != 0:
+        #     loss_log_sc = self._loss_log_sc(bs_pred, bs_target) 
+        #     total_loss += hparams.f2 * loss_log_sc
+        # if hparams.f3 != 0:
+        #     loss_freq = self._loss_freq(bs_pred, bs_target)
+        #     total_loss += hparams.f3 * loss_freq
+        # if hparams.f4 != 0:
+        #     loss_weighted_phase = self._loss_weighted_phase(bs_pred, bs_target)
+        #     total_loss += hparams.f4 * loss_weighted_phase
+        # if hparams.f5 != 0:
+        #     loss_l1 = self._loss_l1(pred, target)
+        #     total_loss += hparams.f5 * loss_l1
 
-        loss = total_loss, \
+        loss = self._loss_l1(pred, target), \
                 self._loss_MSE(pred, target), \
                 self._loss_rel_MSE(pred, target)
 
@@ -328,7 +321,7 @@ class Trainer:
         #     self.plot_output_debug(target, output)
         
         # Loss calculation
-        loss = self._loss(output, target)
+        loss = self.loss_f(output, target)
         return loss
 
     def plot_output_debug(self, target, output, folder, from_matlab=None):
@@ -363,7 +356,10 @@ class Trainer:
             # zero grads
             self.optimizer.zero_grad()
             # forward pass + loss computation
-            loss = self.run_batch_f(sources, targets)
+            if self.mode == 'opt':
+                loss = self._run_batch(sources, targets)
+            else:#if self.mode == 'rand': 
+                loss = self._run_batch_rand()
             # backward pass
             loss.backward()
             # optimizer step
@@ -391,7 +387,10 @@ class Trainer:
             # zero grads
             self.optimizer.zero_grad()
             # forward pass + loss computation
-            loss, mse_loss, rel_mse_loss = self.run_batch_f(sources, targets)
+            if self.mode == 'opt':
+                loss, mse_loss, rel_mse_loss = self._run_batch(sources, targets)
+            else:#if self.mode == 'rand': 
+                loss, mse_loss, rel_mse_loss = self._run_batch_rand()
             # backward pass
             loss.backward()
             # optimizer step
@@ -414,9 +413,10 @@ class Trainer:
         total_mse_loss = 0
         total_mse_norm_loss = 0
         
-        for idx, (sources, targets) in self.train_loader:
+        for idx, (sources, targets) in self.val_loader:
             # forward pass + loss computation
-            loss, mse_loss, rel_mse_loss = self.run_batch_f(sources, targets)
+            loss, mse_loss, rel_mse_loss = self._run_batch(sources, targets)
+
             # update avg loss 
             total_loss += loss
             total_mse_loss += mse_loss.item()
@@ -440,7 +440,8 @@ class Trainer:
             nof_samples += 1
             with torch.no_grad():
                 # forward pass + loss computation
-                loss = self.run_batch_f(sources, targets)
+                loss = self._run_batch(sources, targets)
+
                 # update avg loss 
                 total_loss += loss
             
@@ -545,7 +546,7 @@ class Trainer:
                         self.optimizer.param_groups[0]['lr'] *= hparams.manual_lr_f 
                 elif self.scheduler_name == 'ReduceLROnPlateau':
                     self.scheduler.step(train_loss)
-                elif self.scheduler_name == 'StepLR':
+                elif self.scheduler_name == 'StepLR' or self.scheduler_name == "OneCycleLR":
                     self.scheduler.step()
 
             if self.epoch % self.save_every == 0:
@@ -619,4 +620,4 @@ class Trainer:
                     self.last_loss = train_loss
         # test
         test_loss = self.test()
-        print(f'Test loss l1: {test_loss.item():.6f}')
+        print(f'Test loss l1: {test_loss:.6f}')
