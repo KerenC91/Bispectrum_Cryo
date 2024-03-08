@@ -64,7 +64,7 @@ def loss_all(pred, target):
     return loss
     
 def create_dataset(device, data_size):
-    bs_calc = BispectrumCalculator(data_size, optuna_params.N, device).to(device)
+    bs_calc = BispectrumCalculator(optuna_params.N, device).to(device)
     target = torch.randn(data_size, 1, optuna_params.N)
     target.to(device)
     source, target = bs_calc(target)
@@ -72,7 +72,7 @@ def create_dataset(device, data_size):
     dataset = UnitVecDataset(source, target)
     return dataset
 
-def try_model(trial):
+def try_model(trial, device):
     model_num = 3#trial.suggest_int("model_num", 1, 3)
     
     pre_residuals = trial.suggest_int("pre_residuals", 0, 14)
@@ -114,6 +114,7 @@ def try_model(trial):
     channels[-1] = last_ch
     
     model = CNNBS(
+        device=device,
         input_len=optuna_params.N,
         n_heads=n_heads,
         channels=channels,
@@ -226,7 +227,7 @@ def objective(trial: Trial, epochs):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Initialize model and optimizer
-    model = try_model(trial)
+    model = try_model(trial, device)
     model.to(device)
     optimizer = try_optimizer(trial, model)
     # set scheduler
@@ -262,7 +263,7 @@ def objective(trial: Trial, epochs):
             targets = targets.to(device)
             sources = sources.to(device)
             # Forward pass
-            _, output = model(sources) # reconstructed signal
+            output = model(sources) # reconstructed signal
             # Loss calculation
             loss, mse_loss, rel_mse_loss = loss_all(output, targets)
             # backward pass
