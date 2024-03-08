@@ -12,6 +12,7 @@ class HParams:
         for attr, value in self.__dict__.items():
             param_strings.append(f"{attr}: {value}")
         return ", ".join(param_strings)
+
 # Example usage:
 hparams = HParams(
     #####################################
@@ -80,6 +81,7 @@ hparams = HParams(
     cyc_lr_pct_start = 0.5622271055325254,
     cyc_lr_anneal_strategy = 'cos',
     
+    
     ##########################
     # optimizer
     ##########################
@@ -91,6 +93,7 @@ hparams = HParams(
     # AdamW
     opt_adam_w_betas=(0.891592775789722, 0.9166003229827805),
     opt_adam_w_weight_decay=0.08730870077064574,
+    opt_adam_w_eps = 9.606529741408894e-07,
     # Adam
     opt_adam_betas=(0.9, 0.999),
     opt_adam_eps = 1e-8,
@@ -104,7 +107,7 @@ hparams = HParams(
     ##########################
     last_ch = 256, # for all models: 8, for model3: 64
     dilation_mid = 1,
-    n_heads = 1, # number of cnn heads
+    n_heads = 5, # number of cnn heads
     #channels = [256, 256], # for model1: [256, 8], for model2: [256, 64]  
                         # layer_channels list of values on each of heads
     channels_model1 = [256, 8],

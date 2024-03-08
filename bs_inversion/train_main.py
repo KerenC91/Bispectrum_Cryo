@@ -64,30 +64,29 @@ def set_read_func(folder_matlab):
 def create_dataset(device, data_size, N, read_baseline, mode, 
                    comp_baseline_folders):
     bs_calc = BispectrumCalculator(N, device).to(device)
-    if read_baseline:
+    if read_baseline: # in val dataset
         target = torch.zeros(data_size, 1, N)
-        if mode == 'opt':
-            _, folder_matlab, _ = \
-                    comp_baseline_folders
-            data_size = min(data_size, len(os.listdir(folder_matlab)))
-            print(f'data_size={data_size}')
+    
+        _, folder_matlab, _ = \
+                comp_baseline_folders
+        data_size = min(data_size, len(os.listdir(folder_matlab)))
+        #print(f'data_size={data_size}')
 
-            for i in range(data_size):
+        for i in range(data_size):
 
-                folder = os.path.join(folder_matlab, f'sample{i}')
-                read_func = set_read_func(folder_matlab)
-                
-                target[i] = read_func(folder)
-  
-        else:
-            print('Error! read data from baseline mode is only possible for '
-                  '\'opt\' mode. Please check your parameters.')
-            sys.exit(1)
+            folder = os.path.join(folder_matlab, f'sample{i}')
+            read_func = set_read_func(folder_matlab)
+            
+            target[i] = read_func(folder)
+
     else:
-        target = torch.randn(data_size, 1, N)
+        if mode == 'opt':
+            target = torch.randn(data_size, 1, N)
+        elif mode == 'rand':
+            target = torch.zeros(data_size, 1, N)
     target.to(device)
     source, target = bs_calc(target)
-    
+
     dataset = UnitVecDataset(source, target)
     return dataset
 
@@ -107,7 +106,7 @@ def set_activation(activation_name):
         
     return activation
         
-def get_model(args):
+def get_model(device, args):
     if args.model == 2:
         head_class = HeadBS2
         channels = hparams.channels_model2
@@ -124,6 +123,7 @@ def get_model(args):
         
     activation = set_activation(hparams.activation)
     model = CNNBS(
+        device=device,
         input_len=args.N,
         n_heads=args.n_heads,
         channels=channels,
@@ -171,10 +171,8 @@ def set_debug_data(args):
     
     
 def prepare_data_loader(dataset, args):
-    dataloader = None
     
-    if args.mode =='opt':
-        dataloader = DataLoader(
+    dataloader = DataLoader(
         dataset=dataset,
         batch_size=args.batch_size,
         pin_memory=False,
@@ -193,8 +191,7 @@ def print_model_summary(args, model):
 def init(args):
     # Set wandb flag
     wandb_flag = args.wandb
-    if (args.wandb_log_interval == 0):
-        wandb_flag = False
+
     if args.read_baseline:
         folder_test = os.path.join(hparams.comp_root, args.comp_test_name)
         if not os.path.exists(folder_test):
@@ -232,7 +229,7 @@ def set_optimizer(args, model):
     elif args.optimizer == 'AdamW':
         optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr,
                                       betas=hparams.opt_adam_w_betas,
-                                      eps=hparams.opt_eps,
+                                      eps=hparams.opt_adam_w_eps,
                                       weight_decay=hparams.opt_adam_w_weight_decay)
     else: # Adam
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr,
@@ -298,11 +295,12 @@ def main(args):
     args = update_suffix(args, DEBUG)
     wandb_flag, comp_baseline_folders = init(args)
     # Initialize model and optimizer
-    model = get_model(args)
+    model = get_model(device, args)
     optimizer = set_optimizer(args, model)
     scheduler = set_scheduler(args.scheduler, optimizer, args.epochs)
     # print and save model
-    print_model_summary(args, model)
+    if args.log_level >= 2:
+    	print_model_summary(args, model)
 
     # set train dataset and dataloader
     
@@ -336,9 +334,9 @@ def main(args):
     run = None
     if wandb_flag:
         wandb.login()
-        run = wandb.init(project='GaussianBispectrumInversion',
-                           name = f"{args.suffix}",
-                           config=args)
+	run = wandb.init(project=args.wandb_proj_name,
+	           name = f"{args.suffix}",
+	           config=args)
         wandb.log({"cmd_line": sys.argv})
         wandb.save('hparams.py')
         wandb.save("train_main.py")
@@ -368,8 +366,8 @@ if __name__ == "__main__":
             help='size of vector in the dataset')
     parser.add_argument('--batch_size', type=int, default=1, metavar='N',
             help='batch size')
-    parser.add_argument('--wandb_log_interval', type=int, default=10, metavar='N',
-            help='interval to log data to wandb')
+    parser.add_argument('--wandb_proj_name', type=str, default='GaussianBispectrumInversion', metavar='N',
+            help='wandb project name')
     parser.add_argument('--save_every', type=int, default=100, metavar='N',
             help='save checkpoint every <save_every> epoch')
     parser.add_argument('--epochs', type=int, default=5000, metavar='N',
@@ -395,6 +393,9 @@ if __name__ == "__main__":
             help='test name') 
     parser.add_argument('--comp_test_name_m', type=str, default='',
             help='test name matlab') 
+    parser.add_argument('--log_level', type=int, default=0, 
+                        help='0: info, 1: warning, '
+                        '2: debug, 3: detailed debug')
     ##---- model parameters
     parser.add_argument('--n_heads', type=int, default=1, 
                     help='number of cnn heads')

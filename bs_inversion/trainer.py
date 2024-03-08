@@ -6,7 +6,11 @@ from hparams import hparams
 import matplotlib.pyplot as plt
 import numpy as np
 from torch.utils.data import DataLoader
-
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.distributed as dist
+from torch.distributed import init_process_group, destroy_process_group, all_reduce
+import gc
+import sys
 
 class Trainer:
     def __init__(self, model, 
@@ -28,7 +32,6 @@ class Trainer:
         self.val_dataset=val_dataset
         self.batch_size = args.batch_size
         self.epochs = args.epochs
-        self.wandb_log_interval = args.wandb_log_interval
         self.train_data_size = args.train_data_size
         self.val_data_size = args.val_data_size
         self.target_len = args.N
@@ -79,26 +82,26 @@ class Trainer:
         return total_loss
 
     def _loss_all(self, pred, target):
-        bs_pred, pred = self.bs_calc(pred)
-        bs_target, target = self.bs_calc(target)
-        total_loss = 0.
-        if hparams.f1 != 0:
-            loss_sc = self._loss_sc(bs_pred, bs_target)
-            total_loss += hparams.f1 * loss_sc
-        if hparams.f2 != 0:
-            loss_log_sc = self._loss_log_sc(bs_pred, bs_target) 
-            total_loss += hparams.f2 * loss_log_sc
-        if hparams.f3 != 0:
-            loss_freq = self._loss_freq(bs_pred, bs_target)
-            total_loss += hparams.f3 * loss_freq
-        if hparams.f4 != 0:
-            loss_weighted_phase = self._loss_weighted_phase(bs_pred, bs_target)
-            total_loss += hparams.f4 * loss_weighted_phase
-        if hparams.f5 != 0:
-            loss_l1 = self._loss_l1(pred, target)
-            total_loss += hparams.f5 * loss_l1
+        # bs_pred, pred = self.bs_calc(pred)
+        # bs_target, target = self.bs_calc(target)
+        # total_loss = 0.
+        # if hparams.f1 != 0:
+        #     loss_sc = self._loss_sc(bs_pred, bs_target)
+        #     total_loss += hparams.f1 * loss_sc
+        # if hparams.f2 != 0:
+        #     loss_log_sc = self._loss_log_sc(bs_pred, bs_target) 
+        #     total_loss += hparams.f2 * loss_log_sc
+        # if hparams.f3 != 0:
+        #     loss_freq = self._loss_freq(bs_pred, bs_target)
+        #     total_loss += hparams.f3 * loss_freq
+        # if hparams.f4 != 0:
+        #     loss_weighted_phase = self._loss_weighted_phase(bs_pred, bs_target)
+        #     total_loss += hparams.f4 * loss_weighted_phase
+        # if hparams.f5 != 0:
+        #     loss_l1 = self._loss_l1(pred, target)
+        #     total_loss += hparams.f5 * loss_l1
 
-        loss = total_loss, \
+        loss = self._loss_l1(pred, target), \
                 self._loss_MSE(pred, target), \
                 self._loss_rel_MSE(pred, target)
 
@@ -290,23 +293,20 @@ class Trainer:
         # Move data to device
         target = target.to(self.device)
         source = source.to(self.device)
+
         # Forward pass
         _, output = self.model(source) # reconstructed signal
         self.last_output = output
         self.last_target = target
         # Loss calculation
+
         loss = self.loss_f(output, target)
+
         return loss
         
     def _run_batch_rand(self):
-        if self.mode == 'rand':
-            target = torch.randn(self.batch_size, 1, self.target_len)
-
-            source, target = self.bs_calc(target)
-        elif self.mode == 'opt':
-            source, target = self.source, self.target
-        else:
-            print(f'error! unknown mode {self.mode}')
+        target = torch.randn(self.batch_size, 1, self.target_len)
+        source, target = self.bs_calc(target)
         # Move data to device
         target = target.to(self.device)
         source = source.to(self.device)
@@ -317,7 +317,7 @@ class Trainer:
         #     self.plot_output_debug(target, output)
         
         # Loss calculation
-        loss = self._loss(output, target)
+        loss = self.loss_f(output, target)
         return loss
 
     def plot_output_debug(self, target, output, folder, from_matlab=None):
@@ -352,13 +352,16 @@ class Trainer:
             # zero grads
             self.optimizer.zero_grad()
             # forward pass + loss computation
-            loss = self._run_batch(sources, targets)
+            if self.mode == 'opt':
+                loss = self._run_batch(sources, targets)
+            else:#if self.mode == 'rand': 
+                loss = self._run_batch_rand()
             # backward pass
             loss.backward()
             # optimizer step
             self.optimizer.step()
             # update avg loss 
-            total_loss += loss
+            total_loss += loss.item()
             
         avg_loss = total_loss / len(self.train_loader)
         
@@ -373,15 +376,19 @@ class Trainer:
             # zero grads
             self.optimizer.zero_grad()
             # forward pass + loss computation
-            loss, mse_loss, rel_mse_loss = self._run_batch(sources, targets)
+            if self.mode == 'opt':
+                loss, mse_loss, rel_mse_loss = self._run_batch(sources, targets)
+            else:#if self.mode == 'rand': 
+                loss, mse_loss, rel_mse_loss = self._run_batch_rand()
             # backward pass
             loss.backward()
             # optimizer step
             self.optimizer.step()
+            torch.cuda.empty_cache()
             # update avg loss 
-            total_loss += loss
-            total_mse_loss += mse_loss
-            total_mse_norm_loss += rel_mse_loss
+            total_loss += loss.item()
+            total_mse_loss += mse_loss.item()
+            total_mse_norm_loss += rel_mse_loss.item()
             
         avg_loss = total_loss / len(self.train_loader)
         avg_mse_loss = total_mse_loss / len(self.train_loader) 
@@ -394,13 +401,14 @@ class Trainer:
         total_mse_loss = 0
         total_mse_norm_loss = 0
         
-        for idx, (sources, targets) in self.train_loader:
+        for idx, (sources, targets) in self.val_loader:
             # forward pass + loss computation
             loss, mse_loss, rel_mse_loss = self._run_batch(sources, targets)
+
             # update avg loss 
-            total_loss += loss
-            total_mse_loss += mse_loss
-            total_mse_norm_loss += rel_mse_loss
+            total_loss += loss.item()
+            total_mse_loss += mse_loss.item()
+            total_mse_norm_loss += rel_mse_loss.item()
             
         avg_loss = total_loss / len(self.val_loader)
         avg_mse_loss = total_mse_loss / len(self.val_loader) 
@@ -409,37 +417,7 @@ class Trainer:
         return avg_loss, avg_mse_loss, avg_mse_norm_loss 
     
     
-    def _run_epoch_train_rand(self):
-        total_loss = 0
-        total_mse_loss = 0
-        total_mse_norm_loss = 0
-        
-        for _ in range(self.train_data_size):
-            # zero grads
-            self.optimizer.zero_grad()
-            # forward pass + loss computation
-            loss = self._run_batch_rand()
-            if self.loss_mode == 'all':
-                loss, mse_loss, rel_mse_loss = loss
-            # backward pass
-            loss.backward()
-            # optimizer step
-            self.optimizer.step()
-            # update avg loss 
-            total_loss += loss.item()
-            if self.loss_mode == 'all':
-                total_mse_loss += mse_loss.item()
-                total_mse_norm_loss += rel_mse_loss.item()
-            
-        avg_loss = total_loss / self.train_data_size
 
-        if self.loss_mode == 'all':
-            avg_mse_loss = total_mse_loss / self.train_data_size 
-            avg_mse_norm_loss = total_mse_norm_loss / self.train_data_size 
-            
-            avg_loss = avg_loss, avg_mse_loss, avg_mse_norm_loss
-        
-        return avg_loss
     
     def _run_epoch_validate(self):
         total_loss = 0
@@ -450,31 +428,15 @@ class Trainer:
             with torch.no_grad():
                 # forward pass + loss computation
                 loss = self._run_batch(sources, targets)
+
                 # update avg loss 
-                total_loss += loss
+                total_loss += loss.item()
             
         avg_loss = total_loss / len(self.val_loader)
             
         return avg_loss
     
-    def _run_epoch_validate_rand(self):
-        total_loss = 0
-        nof_samples = 0
-        
-        for _ in range(self.val_data_size):
-            nof_samples += 1
-            with torch.no_grad():
-                # forward pass + loss computation
-                loss = self._run_batch_rand()
-                if self.loss_mode == 'all':
-                    loss, _, _ = loss
-                # update avg loss 
-                total_loss += loss.item()
-                
-        avg_loss = total_loss / self.val_data_size
-        
-        return avg_loss
-    
+
     # one epoch of training           
     def train(self):
         # Set the model to training mode
@@ -501,7 +463,7 @@ class Trainer:
 
     # one epoch of testing 
     def test(self):
-        return torch.tensor(0)
+        return 0
     
     def write_python_test_results(self, dataset):#changedataloader
         dataloader = DataLoader(
@@ -565,28 +527,28 @@ class Trainer:
                         self.optimizer.param_groups[0]['lr'] *= hparams.manual_lr_f 
                 elif self.scheduler_name == 'ReduceLROnPlateau':
                     self.scheduler.step(train_loss)
-                elif self.scheduler_name == 'StepLR':
+                elif self.scheduler_name == 'StepLR' or self.scheduler_name == "OneCycleLR":
                     self.scheduler.step()
             # log loss with wandb
             if self.wandb_flag and self.epoch % self.wandb_log_interval == 0:
-                wandb.log({"train_loss_l1": train_loss.item()})
-                wandb.log({"val_loss_l1": val_loss.item()})
+                wandb.log({"train_loss_l1": train_loss})
+                wandb.log({"val_loss_l1": val_loss})
                 wandb.log({"lr": self.optimizer.param_groups[0]['lr']})
                 if self.loss_mode == 'all':
-                    wandb.log({"train mse": train_mse_loss.item()})
-                    wandb.log({"train relative mse": train_rel_mse_loss.item()})
-                    wandb.log({"val mse": val_mse_loss.item()})
-                    wandb.log({"val relative mse": val_rel_mse_loss.item()})
+                    wandb.log({"train mse": train_mse_loss})
+                    wandb.log({"train relative mse": train_rel_mse_loss})
+                    wandb.log({"val mse": val_mse_loss})
+                    wandb.log({"val relative mse": val_rel_mse_loss})
             # save checkpoint and log loss to cmd 
             if self.epoch % self.save_every == 0:
                 print(f'-------Epoch {self.epoch}/{self.epochs}-------')
-                print(f'Train loss l1: {train_loss.item():.6f}')
-                print(f'Validation loss l1: {val_loss.item():.6f}')
+                print(f'Train loss l1: {train_loss:.6f}')
+                print(f'Validation loss l1: {val_loss:.6f}')
                 if self.loss_mode == 'all':
-                    print(f'train mse loss: {train_mse_loss.item():.6f}')
-                    print(f'train relative mse loss: {train_rel_mse_loss.item():.6f}')
-                    print(f'val mse loss: {val_mse_loss.item():.6f}')
-                    print(f'val relative mse loss: {val_rel_mse_loss.item():.6f}')
+                    print(f'train mse loss: {train_mse_loss:.6f}')
+                    print(f'train relative mse loss: {train_rel_mse_loss:.6f}')
+                    print(f'val mse loss: {val_mse_loss:.6f}')
+                    print(f'val relative mse loss: {val_rel_mse_loss:.6f}')
                 if self.scheduler_name != 'None':
                     print(f'lr: {last_lr}')
                 # save checkpoint
@@ -614,17 +576,17 @@ class Trainer:
                     self.es_cnt +=1
                     if self.es_cnt == self.early_stopping:
                         print(f'Stooped at epoch {self.epoch}, after {self.es_cnt} times\n'
-                        		f'last_loss={self.last_loss.item()}, curr_los={train_loss.item()}')
+                              f'last_loss={self.last_loss}, curr_los={train_loss}')
                         folder = f'figures/cnn_{self.suffix}'
                         self.plot_output_debug(self.last_target[0].squeeze(0).detach().cpu().numpy(),
                                                self.last_output[0].squeeze(0).detach().cpu().numpy(), 
                                                folder)
                         return
             # stop if loss has reached lower bound
-            if train_loss.item() < hparams.loss_lim:
+            if train_loss < hparams.loss_lim:
                 print(f'Stooped at epoch {self.epoch},\n'
-                      f'curr_los={train_loss.item()} < {hparams.loss_lim}')    
+                      f'curr_los={train_loss} < {hparams.loss_lim}')    
                 self.last_loss = train_loss
         # test
         test_loss = self.test()
-        print(f'Test loss l1: {test_loss.item():.6f}')
+        print(f'Test loss l1: {test_loss:.6f}')
