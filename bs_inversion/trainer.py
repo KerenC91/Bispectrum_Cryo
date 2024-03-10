@@ -552,14 +552,16 @@ class Trainer:
             if self.epoch % self.save_every == 0:
                 # Get loss from all processes
                 all_reduce(train_loss, op=dist.ReduceOp.SUM)
-                all_reduce(val_loss, op=dist.ReduceOp.SUM) 
+                all_reduce(val_loss, op=dist.ReduceOp.SUM)
+                # Only gpu 0 operating now...
+                if self.device == 0: 
+                    # update losses
+                    # Get loss from all processes
+                    train_loss /= self.nprocs
+                    val_loss /= self.nprocs
                     
             # Only gpu 0 operating now...
             if self.device == 0: 
-                # update losses
-                # Get loss from all processes
-                train_loss /= self.nprocs
-                val_loss /= self.nprocs
                 # log loss with wandb
                 if self.wandb_flag and self.epoch % self.save_every == 0:
                     wandb.log({"train_loss_l1": train_loss.item()})
