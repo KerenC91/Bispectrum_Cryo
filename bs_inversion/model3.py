@@ -34,9 +34,9 @@ class HeadBS3(nn.Module):
                                                   pre_conv_channels, 
                                                   pre_residuals)
 
-        self.dilated_conv = self._set_dilated_conv_layers(in_nc=pre_conv_channels[-1], 
-                                                          nc=pre_conv_channels[-1], 
-                                                          out_nc=pre_conv_channels[-1])       
+        # self.dilated_conv = self._set_dilated_conv_layers(in_nc=pre_conv_channels[-1], 
+        #                                                   nc=pre_conv_channels[-1], 
+        #                                                   out_nc=pre_conv_channels[-1])       
 
         self.reduce_height = self._set_reduce_height(pre_conv_channels[-1], 
                                                      reduce_height)
@@ -52,10 +52,14 @@ class HeadBS3(nn.Module):
         c1 = last_pre_conv_ch
         # Create pre middle layer - reduce height
         reduce_height_layers = []
-        cnt, k, s = reduce_height
+        cnt, k, s, add_conv_2= reduce_height
+
         for _ in range(cnt):
             reduce_height_layers.append(nn.Conv2d(in_channels=c1, out_channels=c1, 
                 kernel_size=(k, 1), stride=(s, 1)))
+        if add_conv_2:
+            reduce_height_layers.append(nn.Conv2d(in_channels=c1, out_channels=c1, 
+                kernel_size=(2, 1), stride=(2, 1)))
         return nn.Sequential(*reduce_height_layers)
         
     def _set_pre_conv_layers(self, bs_channels, pre_conv_channels, pre_residuals):
