@@ -105,7 +105,46 @@ def set_activation(activation_name):
         activation = nn.LeakyReLU()
         
     return activation
+
+def update_reduce_height_cnt(k, s, Hin):
+    """
+    Calculate the number of layers for reducing height, based on k, s
+
+    Parameters
+    ----------
+    k : int
+        height kernel size.
+    s : int
+        height stride size.
+    Hin : int
+        height of the input signal.
         
+    Returns
+    -------
+    cnt : int
+        Number of reduce_height layers to perform.
+    k : int
+        height kernel size for each layer.
+    s : int
+        height stride size for each layer.
+
+    """
+    if Hin < k:
+        print(f'Error! Hin={Hin} is smaller or equal to k={k}')
+        sys.exit(1)
+    H = Hin
+    cnt = 0
+    add_conv_2 = False
+    while H > 1:
+        H = int((H - k) / s) + 1
+        cnt += 1 
+        if H == 2:
+            add_conv_2 = True
+            break
+    print(f'reduce_height=[{cnt},{k},{s},{add_conv_2}]')
+    
+    return cnt, k, s, add_conv_2
+    
 def get_model(device, args):
     if args.model == 2:
         head_class = HeadBS2
@@ -120,7 +159,8 @@ def get_model(device, args):
 
     hparams.pre_conv_channels[-1] = hparams.last_ch
     channels[-1] = hparams.last_ch
-        
+    cnt, k, s = hparams.reduce_height
+    reduce_height = update_reduce_height_cnt(k, s, args.N)
     activation = set_activation(hparams.activation)
     model = CNNBS(
         device=device,
@@ -133,7 +173,7 @@ def get_model(device, args):
         up_residuals=hparams.up_residuals,
         post_residuals=hparams.post_residuals,
         pow_2_channels=args.pow_2_channels,
-        reduce_height=hparams.reduce_height,
+        reduce_height=reduce_height,
         head_class = head_class,
         linear_ch=hparams.last_ch,
         activation=activation
@@ -334,9 +374,9 @@ def main(args):
     run = None
     if wandb_flag:
         wandb.login()
-	run = wandb.init(project=args.wandb_proj_name,
-	           name = f"{args.suffix}",
-	           config=args)
+       	run = wandb.init(project=args.wandb_proj_name,
+               	           name = f"{args.suffix}",
+               	           config=args)
         wandb.log({"cmd_line": sys.argv})
         wandb.save('hparams.py')
         wandb.save("train_main.py")
