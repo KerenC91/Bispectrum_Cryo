@@ -105,7 +105,6 @@ hparams = HParams(
     ##########################
     last_ch = 256, # for all models: 8, for model3: 64
     dilation_mid = 1,
-    n_heads = 5, # number of cnn heads
     #channels = [256, 256], # for model1: [256, 8], for model2: [256, 64]  
                         # layer_channels list of values on each of heads
     channels_model1 = [256, 8],

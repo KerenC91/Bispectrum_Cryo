@@ -414,14 +414,15 @@ class Trainer:
         total_mse_norm_loss = 0
         
         for idx, (sources, targets) in self.val_loader:
-            # forward pass + loss computation
-            loss, mse_loss, rel_mse_loss = self._run_batch(sources, targets)
-
-            # update avg loss 
-            total_loss += loss
-            total_mse_loss += mse_loss.item()
-            total_mse_norm_loss += rel_mse_loss.item()
-            del sources, targets, loss
+            with torch.no_grad():
+                # forward pass + loss computation
+                loss, mse_loss, rel_mse_loss = self._run_batch(sources, targets)
+    
+                # update avg loss 
+                total_loss += loss
+                total_mse_loss += mse_loss.item()
+                total_mse_norm_loss += rel_mse_loss.item()
+                del sources, targets, loss
             
         avg_loss = total_loss / len(self.val_loader)
         avg_mse_loss = total_mse_loss / len(self.val_loader) 
@@ -434,10 +435,8 @@ class Trainer:
     
     def _run_epoch_validate(self):
         total_loss = 0
-        nof_samples = 0
         
         for idx, (sources, targets) in self.val_loader:
-            nof_samples += 1
             with torch.no_grad():
                 # forward pass + loss computation
                 loss = self._run_batch(sources, targets)
@@ -620,6 +619,8 @@ class Trainer:
                     print(f'Stooped at epoch {self.epoch},\n'
                           f'curr_los={train_loss.item()} < {hparams.loss_lim}')    
                     self.last_loss = train_loss
+        
         # test
-        test_loss = self.test()
-        print(f'Test loss l1: {test_loss:.6f}')
+        with torch.no_grad():
+            test_loss = self.test()
+            print(f'Test loss l1: {test_loss:.6f}')
