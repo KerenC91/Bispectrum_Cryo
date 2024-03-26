@@ -39,7 +39,7 @@ class Trainer:
         self.save_every = args.save_every
         self.model = model.to(device)
         self.model = DDP(self.model, device_ids=[self.device], 
-                         find_unused_parameters=True)
+                         find_unused_parameters=False)
         self.wandb_flag = wandb_flag
         self.normalize = args.normalize
         self.mode = args.mode
@@ -621,6 +621,7 @@ class Trainer:
                     self.last_loss = train_loss
         
         # test
-        with torch.no_grad():
-            test_loss = self.test()
-            print(f'Test loss l1: {test_loss:.6f}')
+        # if self.device == 0: 
+        #     with torch.no_grad():
+        #         test_loss = self.test()
+        #         print(f'Test loss l1: {test_loss:.6f}')
