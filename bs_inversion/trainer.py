@@ -407,7 +407,7 @@ class Trainer:
                 loss, mse_loss, rel_mse_loss = self._run_batch(sources, targets)
     
                 # update avg loss 
-            total_loss += loss.item()
+                total_loss += loss.item()
                 total_mse_loss += mse_loss.item()
                 total_mse_norm_loss += rel_mse_loss.item()
 
