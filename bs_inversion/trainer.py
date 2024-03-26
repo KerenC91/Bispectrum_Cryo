@@ -295,7 +295,7 @@ class Trainer:
         source = source.to(self.device)
 
         # Forward pass
-        _, output = self.model(source) # reconstructed signal
+        output = self.model(source) # reconstructed signal
         self.last_output = output
         self.last_target = target
         # Loss calculation
@@ -304,7 +304,7 @@ class Trainer:
 
         return loss
         
-    def _run_batch_rand(self):
+    def _run_batch_rand_org(self):
         target = torch.randn(self.batch_size, 1, self.target_len)
         source, target = self.bs_calc(target)
         # Move data to device
@@ -320,6 +320,36 @@ class Trainer:
         loss = self.loss_f(output, target)
         return loss
 
+    def _run_batch_rand(self):
+        target = torch.randn(self.batch_size, 1, self.target_len)
+
+        source, target = self.bs_calc(target)
+        target = target.squeeze(1)
+        shifts = np.random.randint(low=0, 
+                                   high=self.target_len, 
+                                   size=(self.batch_size, 1))
+        mask = np.tile(np.arange(0, self.target_len), 
+                       (self.batch_size, 1)) + shifts
+        mask %= self.target_len
+        
+        for i in range(self.batch_size):
+            target[i] = target[i][mask[i]]
+        target = target.unsqueeze(1)
+        
+        # Move data to device
+        target = target.to(self.device)
+        source = source.to(self.device)
+        # Forward pass
+        output = self.model(source) # reconstructed signal
+        self.last_output = output
+        # if self.epoch % hparams.dbg_draw_rate == 0:
+        #     self.plot_output_debug(target, output)
+        
+        # Loss calculation
+        loss = self.loss_f(output, target)
+        return loss
+    
+    
     def plot_output_debug(self, target, output, folder, from_matlab=None):
         if not os.path.exists(folder):
             os.makedirs(folder)
@@ -477,7 +507,7 @@ class Trainer:
             target = target.to(self.device)
             source = source.to(self.device)
             # Forward pass
-            _, output = self.model(source) # reconstructed signal
+            output = self.model(source) # reconstructed signal
             self.save_python_test_data(idx.item(), output, target)
             
     def save_python_test_data(self, i, x_est, x_true):
