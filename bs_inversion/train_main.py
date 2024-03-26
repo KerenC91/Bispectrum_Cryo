@@ -381,7 +381,6 @@ def main(args):
         wandb.save('hparams.py')
         wandb.save("train_main.py")
         wandb.save(f"model{args.model}.py")        
-        wandb.watch(model, log_freq=100)
     # Train and evaluate
     trainer.run()
     if wandb_flag:
