@@ -83,13 +83,14 @@ def create_dataset(device, data_size, N, read_baseline, mode,
             target[i] = read_func(folder)
 
     else:
+        print(f'read_baseline={read_baseline}, mode[0]={mode[0]}')
         if mode[0] == 'opt':
             target = torch.randn(data_size, 1, N)
         elif mode[0] == 'rand':
             target = torch.zeros(data_size, 1, N)
     target.to(device)
     source, target = bs_calc(target)
-    if mode[0] == 'opt' and mode[1] == 'shift':
+    if mode[0] == 'opt' and mode[1] == 'shift' and not read_baseline:
             target, shifts = rand_shift_signal(target, N, data_size)
     dataset = UnitVecDataset(source, target)
 
