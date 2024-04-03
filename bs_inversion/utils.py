@@ -147,12 +147,9 @@ class BispectrumCalculator(nn.Module):
     def _create_data(self, target):
         # Create data
         target = target.clone()
-        # print(f'GPU{self.device}: target.shape={target.shape}')
         bs, ps, f = self.calculator(target)
-        # print(f'GPU{self.device}: bs.shape={bs.shape}')
         bs_real = bs.real.float()
         bs_imag = bs.imag.float()
-        # print(f'GPU{self.device}: got here 2')
         source = torch.stack([bs_real, bs_imag], dim=1)
                
         return source, target.unsqueeze(0) 
@@ -164,6 +161,60 @@ class BispectrumCalculator(nn.Module):
         source = torch.zeros(batch_size, self.channels, self.height, self.width).to(self.device)
 
         for i in range(batch_size):
-            # print(f'GPU{self.device}: i={i}, source.shape={source.shape}')
             source[i], target[i] = self._create_data(target[i])
         return source, target  # Stack processed vectors
+    
+    
+def align_to_reference(x, xref):
+    """
+    Aligns a signal (x) to a reference signal (xref) using circular shift.
+    
+    Args:
+        x: A numpy array of the signal to be aligned.
+        xref: A numpy array of the reference signal.
+    
+    Returns:
+        A numpy array of the aligned signal.
+    """
+    
+    # Check if input arrays have the same size
+    assert x.shape == xref.shape, "x and xref must have identical size"
+    
+    org_shape = x.shape
+    
+    # Reshape to column vectors
+    x = x.flatten()
+    xref = xref.flatten()
+    
+    # Compute FFTs
+    x_fft = torch.fft.fft(x)
+    xref_fft = torch.fft.fft(xref)
+    
+    # Compute correlation using inverse FFT of complex conjugate product
+    correlation_x_xref = torch.real(torch.fft.ifft(torch.conj(x_fft) * xref_fft))
+    
+    # Find index of maximum correlation
+    ind = torch.argmax(correlation_x_xref).item()
+    
+    # Perform circular shift
+    x_aligned = torch.roll(x, ind - 1)
+    
+    return x_aligned.reshape(org_shape)
+
+def rand_shift_signal(target, target_len, batch_size):
+    target = target.squeeze(1)
+    shifts = np.random.randint(low=0, 
+                               high=target_len, 
+                               size=(batch_size, 1))
+    mask = np.tile(np.arange(0, target_len), 
+                   (batch_size, 1)) + shifts
+    mask %= target_len
+    
+    for i in range(batch_size):
+        target[i] = target[i][mask[i]]
+    target = target.unsqueeze(1)
+    
+    return target, shifts
+            
+
+
