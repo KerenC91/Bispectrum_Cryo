@@ -163,3 +163,58 @@ class BispectrumCalculator(nn.Module):
         for i in range(batch_size):
             source[i], target[i] = self._create_data(target[i])
         return source, target  # Stack processed vectors
+    
+    
+def align_to_reference(x, xref):
+    """
+    Aligns a signal (x) to a reference signal (xref) using circular shift.
+    
+    Args:
+        x: A numpy array of the signal to be aligned.
+        xref: A numpy array of the reference signal.
+    
+    Returns:
+        A numpy array of the aligned signal.
+    """
+    
+    # Check if input arrays have the same size
+    assert x.shape == xref.shape, "x and xref must have identical size"
+    
+    org_shape = x.shape
+    
+    # Reshape to column vectors
+    x = x.flatten()
+    xref = xref.flatten()
+    
+    # Compute FFTs
+    x_fft = torch.fft.fft(x)
+    xref_fft = torch.fft.fft(xref)
+    
+    # Compute correlation using inverse FFT of complex conjugate product
+    correlation_x_xref = torch.real(torch.fft.ifft(torch.conj(x_fft) * xref_fft))
+    
+    # Find index of maximum correlation
+    ind = torch.argmax(correlation_x_xref).item()
+    
+    # Perform circular shift
+    x_aligned = torch.roll(x, ind - 1)
+    
+    return x_aligned.reshape(org_shape)
+
+def rand_shift_signal(target, target_len, batch_size):
+    target = target.squeeze(1)
+    shifts = np.random.randint(low=0, 
+                               high=target_len, 
+                               size=(batch_size, 1))
+    mask = np.tile(np.arange(0, target_len), 
+                   (batch_size, 1)) + shifts
+    mask %= target_len
+    
+    for i in range(batch_size):
+        target[i] = target[i][mask[i]]
+    target = target.unsqueeze(1)
+    
+    return target, shifts
+            
+
+

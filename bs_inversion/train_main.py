@@ -5,7 +5,7 @@ import wandb
 import torch 
 from torch.utils.data import Dataset, DataLoader
 import argparse
-from utils import BispectrumCalculator
+from utils import BispectrumCalculator, rand_shift_signal
 from model1 import CNNBS, HeadBS1
 from model2 import HeadBS2
 from model3 import HeadBS3
@@ -80,15 +80,18 @@ def create_dataset(device, data_size, N, read_baseline, mode,
             target[i] = read_func(folder)
 
     else:
-        if mode == 'opt':
+        if mode[0] == 'opt':
             target = torch.randn(data_size, 1, N)
-        elif mode == 'rand':
+        elif mode[0] == 'rand':
             target = torch.zeros(data_size, 1, N)
     target.to(device)
     source, target = bs_calc(target)
-
+    if mode[0] == 'opt' and mode[1] == 'shift':
+            target, shifts = rand_shift_signal(target, N, data_size)
     dataset = UnitVecDataset(source, target)
+
     return dataset
+
 
 def set_activation(activation_name):
     #['ELU', 'LeakyReLU', 'ReLU', 'Softsign', 'Tanh'])
@@ -421,9 +424,11 @@ if __name__ == "__main__":
             'default: \'None\' - no change in lr') 
     parser.add_argument('--lr', type=float, default=1e-3, metavar='f',
             help='learning rate (initial for dynamic lr, otherwise fixed)')  
-    parser.add_argument('--mode', type=str, default='opt',
-            help='\'rand\': Create random data during training if True.'
-                    '\'opt\': Optimize on predefined data')  
+    parser.add_argument('--mode', type=str, nargs='+', default=['opt'],
+            help= '[mode, add], mode in {\'rand\'\,\'opt\'}, add (optioanl) in {\'shift\'}'
+                '\'rand\': Create random data during training.\n'
+                    '\'opt\': Create a fixed dataset'
+                    '\'shift\': Randomly shift the signal.\n') 
     parser.add_argument('--suffix', type=str, default='',
             help='suffix to add to the name of the cnn yml file')  
     parser.add_argument('--config_mode', type=int, default=0, 

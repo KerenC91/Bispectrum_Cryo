@@ -11,6 +11,7 @@ import torch.distributed as dist
 from torch.distributed import init_process_group, destroy_process_group, all_reduce
 import gc
 import sys
+from utils import align_to_reference, rand_shift_signal
 
 class Trainer:
     def __init__(self, model, 
@@ -296,6 +297,8 @@ class Trainer:
 
         # Forward pass
         output = self.model(source) # reconstructed signal
+        if self.mode[1] == 'shift':
+            output = align_to_reference(output, target)
         self.last_output = output
         self.last_target = target
         # Loss calculation
@@ -304,43 +307,21 @@ class Trainer:
 
         return loss
         
-    def _run_batch_rand_org(self):
-        target = torch.randn(self.batch_size, 1, self.target_len)
-        source, target = self.bs_calc(target)
-        # Move data to device
-        target = target.to(self.device)
-        source = source.to(self.device)
-        # Forward pass
-        _, output = self.model(source) # reconstructed signal
-        self.last_output = output
-        # if self.epoch % hparams.dbg_draw_rate == 0:
-        #     self.plot_output_debug(target, output)
-        
-        # Loss calculation
-        loss = self.loss_f(output, target)
-        return loss
-
     def _run_batch_rand(self):
         target = torch.randn(self.batch_size, 1, self.target_len)
-
         source, target = self.bs_calc(target)
-        target = target.squeeze(1)
-        shifts = np.random.randint(low=0, 
-                                   high=self.target_len, 
-                                   size=(self.batch_size, 1))
-        mask = np.tile(np.arange(0, self.target_len), 
-                       (self.batch_size, 1)) + shifts
-        mask %= self.target_len
-        
-        for i in range(self.batch_size):
-            target[i] = target[i][mask[i]]
-        target = target.unsqueeze(1)
+        if self.mode[1] == 'shift':
+            target, shifts = rand_shift_signal(target, 
+                                               self.target_len, 
+                                               self.batch_size)
         
         # Move data to device
         target = target.to(self.device)
         source = source.to(self.device)
         # Forward pass
         output = self.model(source) # reconstructed signal
+        if self.mode[1] == 'shift':
+            output = align_to_reference(output, target)
         self.last_output = output
         # if self.epoch % hparams.dbg_draw_rate == 0:
         #     self.plot_output_debug(target, output)
@@ -382,9 +363,9 @@ class Trainer:
             # zero grads
             self.optimizer.zero_grad()
             # forward pass + loss computation
-            if self.mode == 'opt':
+            if self.mode[0] == 'opt':
                 loss = self._run_batch(sources, targets)
-            else:#if self.mode == 'rand': 
+            else:#if self.mode[0] == 'rand': 
                 loss = self._run_batch_rand()
             # backward pass
             loss.backward()
@@ -406,9 +387,9 @@ class Trainer:
             # zero grads
             self.optimizer.zero_grad()
             # forward pass + loss computation
-            if self.mode == 'opt':
+            if self.mode[0] == 'opt':
                 loss, mse_loss, rel_mse_loss = self._run_batch(sources, targets)
-            else:#if self.mode == 'rand': 
+            else:#if self.mode[0] == 'rand': 
                 loss, mse_loss, rel_mse_loss = self._run_batch_rand()
             # backward pass
             loss.backward()
