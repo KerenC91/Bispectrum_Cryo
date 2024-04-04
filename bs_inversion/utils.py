@@ -197,9 +197,9 @@ def align_to_reference(x, xref):
     ind = torch.argmax(correlation_x_xref).item()
     
     # Perform circular shift
-    x_aligned = torch.roll(x, ind - 1)
+    x_aligned = torch.roll(x, ind)
     
-    return x_aligned.reshape(org_shape)
+    return x_aligned.reshape(org_shape), ind
 
 def rand_shift_signal(target, target_len, batch_size):
     target = target.squeeze(1)

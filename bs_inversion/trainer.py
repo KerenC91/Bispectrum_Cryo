@@ -302,7 +302,7 @@ class Trainer:
         # Forward pass
         output = self.model(source) # reconstructed signal
         if self.mode[1] == 'shift':
-            output = align_to_reference(output, target)
+            output, _ = align_to_reference(output, target)
         self.last_output = output
         self.last_target = target
         # Loss calculation
@@ -325,7 +325,7 @@ class Trainer:
         # Forward pass
         output = self.model(source) # reconstructed signal
         if self.mode[1] == 'shift':
-            output = align_to_reference(output, target)
+            output, _ = align_to_reference(output, target)
         self.last_output = output
         # if self.epoch % hparams.dbg_draw_rate == 0:
         #     self.plot_output_debug(target, output)
