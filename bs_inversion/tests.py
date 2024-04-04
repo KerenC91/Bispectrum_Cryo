@@ -1,12 +1,14 @@
 import torch
 import torch.nn as nn
 import math
-from utils import calculate_bispectrum_power_spectrum_efficient
+from utils import calculate_bispectrum_power_spectrum_efficient, align_to_reference
 import torch
 import torch.nn as nn
 import os
 import numpy as np
 import torch
+import random
+
 
 def positional_encoding(x):
     max_length = x.size(2)#10 # length of sequence, here length of signal
@@ -252,9 +254,49 @@ def read_test_from_matlab(test_i=1,
 
     return x_true, data, shifts, x_est, p_est, rel_error_X, tv_error_p
 
+def test_bs_correlation():
+    n = 20
+    n_shifts = 10
+    dt = 1
+    x = torch.randn(n)
+    Bx_efficient, _, _ = \
+        calculate_bispectrum_power_spectrum_efficient(x, dt)
+    
+    # Verify the bispectrum is invariant under translations
+    mse_avg = 0
+    mse_thresh = 1e-8
+    
+    for i in range(n_shifts):
+        shift = random.randint(0, n - 1)
+        # Performing cyclic shift over the signal
+        shifted_x = torch.roll(x, shift)
+        # Calculating Bispectrum of the shifted signal
+        shifted_Bx, _, _ = \
+            calculate_bispectrum_power_spectrum_efficient(shifted_x, dt)
+        # Calculate the mse between Bx and shifted_Bx
+        mse = torch.abs(torch.mean((Bx_efficient - shifted_Bx) ** 2)).item()
+        mse_avg +=mse
+        #print(f'mse={mse}')
+        if mse > mse_thresh:
+            print(f"Error! Bispectrums don't match. MSE error = {mse}")
+
+    print(f"done! average mse is {mse_avg / n_shifts}")
+    bs_x = calculate_bispectrum_power_spectrum_efficient(x)
+    
+def test_signals_correlation():
+    n = 20
+    shift = 5
+    xref = torch.randn(n)
+    x = torch.roll(xref, shift)
+    x_aligned_reshaped, ind = align_to_reference(x, xref)
+    print(f"done! ind={ind}, shift={shift}")
+    
+    
 if __name__ == "__main__":
 
-    read_test_from_matlab()
+    #test_bs_correlation()
+    test_signals_correlation()
+    #read_test_from_matlab()
     #test_VectorProcessor()
     #test_strided_conv_height()
     #test_type = 2

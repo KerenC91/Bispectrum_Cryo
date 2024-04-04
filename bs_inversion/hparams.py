@@ -18,9 +18,9 @@ hparams = HParams(
     #####################################
     # debug parameters
     #####################################
-    DEBUG = False,
+    DEBUG = True,
     debug_model = 3,
-    debug_N = 100,
+    debug_N = 20,
     debug_last_ch = 256,# 8 for 1, 2,
     debug_pre_conv_channels = [8, 32, 256], # [8, 32, 64, debug_last_ch]
     debug_pre_residuals = 11,
