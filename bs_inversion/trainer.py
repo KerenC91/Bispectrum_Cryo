@@ -62,6 +62,7 @@ class Trainer:
         self.bs_calc = BispectrumCalculator(self.target_len, self.device).to(self.device)
         self.folder_test, self.folder_matlab, self.folder_python = \
                         comp_baseline_folders
+        self.is_training = True
 
             
     def _loss(self, pred, target):
@@ -301,7 +302,7 @@ class Trainer:
 
         # Forward pass
         output = self.model(source) # reconstructed signal
-        if self.mode[1] == 'shift':
+        if self.mode[1] == 'shift' and not self.is_training:
             output, _ = align_to_reference(output, target)
         self.last_output = output
         self.last_target = target
@@ -324,7 +325,7 @@ class Trainer:
         source = source.to(self.device)
         # Forward pass
         output = self.model(source) # reconstructed signal
-        if self.mode[1] == 'shift':
+        if self.mode[1] == 'shift' and not self.is_training:
             output, _ = align_to_reference(output, target)
         self.last_output = output
         # if self.epoch % hparams.dbg_draw_rate == 0:
@@ -463,6 +464,7 @@ class Trainer:
     def train(self):
         # Set the model to training mode
         self.model.train()
+        self.is_training = True
         
         if self.loss_mode == 'all':
             avg_loss = self._run_epoch_train_losses_all()
@@ -475,6 +477,7 @@ class Trainer:
     def validate(self):
         # Set the model to evaluation mode
         self.model.eval()
+        self.is_training = False
         
         if self.loss_mode == 'all':
             avg_loss = self._run_epoch_validate_losses_all()
