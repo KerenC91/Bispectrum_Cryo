@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 import math
-from utils import calculate_bispectrum_power_spectrum_efficient, align_to_reference
+from utils import (calculate_bispectrum_power_spectrum_efficient,
+            clculate_bispectrum_efficient, align_to_reference, read_csv_from_matlab)
 import torch
 import torch.nn as nn
 import os
@@ -290,12 +291,17 @@ def test_signals_correlation():
     x = torch.roll(xref, shift)
     x_aligned_reshaped, ind = align_to_reference(x, xref)
     print(f"done! ind={ind}, shift={shift}")
-    
+
+def test_bs_py_matlab():
+    matlab_signal_path = '/scratch/home/kerencohen2/Git/HeterogeneousMRA/x1.csv'
+    x = np.loadtxt(matlab_signal_path, delimiter=" ")
+    x = torch.tensor(x)
+    bs_x = clculate_bispectrum_efficient(x)
     
 if __name__ == "__main__":
-
+    test_bs_py_matlab()
     #test_bs_correlation()
-    test_signals_correlation()
+    #test_signals_correlation()
     #read_test_from_matlab()
     #test_VectorProcessor()
     #test_strided_conv_height()
