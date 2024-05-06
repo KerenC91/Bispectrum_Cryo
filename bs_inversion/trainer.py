@@ -88,26 +88,26 @@ class Trainer:
         return total_loss
 
     def _loss_all(self, pred, target):
-        # bs_pred, pred = self.bs_calc(pred)
-        # bs_target, target = self.bs_calc(target)
-        # total_loss = 0.
-        # if hparams.f1 != 0:
-        #     loss_sc = self._loss_sc(bs_pred, bs_target)
-        #     total_loss += hparams.f1 * loss_sc
-        # if hparams.f2 != 0:
-        #     loss_log_sc = self._loss_log_sc(bs_pred, bs_target) 
-        #     total_loss += hparams.f2 * loss_log_sc
-        # if hparams.f3 != 0:
-        #     loss_freq = self._loss_freq(bs_pred, bs_target)
-        #     total_loss += hparams.f3 * loss_freq
-        # if hparams.f4 != 0:
-        #     loss_weighted_phase = self._loss_weighted_phase(bs_pred, bs_target)
-        #     total_loss += hparams.f4 * loss_weighted_phase
-        # if hparams.f5 != 0:
-        #     loss_l1 = self._loss_l1(pred, target)
-        #     total_loss += hparams.f5 * loss_l1
+        bs_pred, pred = self.bs_calc(pred)
+        bs_target, target = self.bs_calc(target)
+        total_loss = 0.
+        if hparams.f1 != 0:
+            loss_sc = self._loss_sc(bs_pred, bs_target)
+            total_loss += hparams.f1 * loss_sc
+        if hparams.f2 != 0:
+            loss_log_sc = self._loss_log_sc(bs_pred, bs_target) 
+            total_loss += hparams.f2 * loss_log_sc
+        if hparams.f3 != 0:
+            loss_freq = self._loss_freq(bs_pred, bs_target)
+            total_loss += hparams.f3 * loss_freq
+        if hparams.f4 != 0:
+            loss_weighted_phase = self._loss_weighted_phase(bs_pred, bs_target)
+            total_loss += hparams.f4 * loss_weighted_phase
+        if hparams.f5 != 0:
+            loss_l1 = self._loss_l1(pred, target)
+            total_loss += hparams.f5 * loss_l1
 
-        loss = self._loss_l1(pred, target), \
+        loss = total_loss, \
                 self._loss_MSE(pred, target), \
                 self._loss_rel_MSE(pred, target)
 
@@ -223,8 +223,7 @@ class Trainer:
         # Get imaginary
         bs_pred_imag = bs_pred.imag
         bs_gt_imag = bs_gt.imag
-        return torch.norm(bs_gt_mag * bs_pred_mag 
-                          - bs_gt_real * bs_pred_real - bs_gt_imag * bs_pred_imag, p=1)
+        return torch.norm(bs_gt_mag * bs_pred_mag - bs_gt_real * bs_pred_real - bs_gt_imag * bs_pred_imag, p=1) / torch.norm(bs_gt_mag * bs_pred_mag, p=1)
         # target - ground truth image, source - Bispectrum of ground truth image
         # might be multiple targets and sources (batch size > 1)
 
@@ -302,8 +301,9 @@ class Trainer:
 
         # Forward pass
         output = self.model(source) # reconstructed signal
-        if self.mode[1] == 'shift' and not self.is_training:
-            output, _ = align_to_reference(output, target)
+        # if self.mode[1] == 'shift' and not self.is_training:
+        if hparams.f5 > 0.:
+             output, _ = align_to_reference(output, target)
         self.last_output = output
         self.last_target = target
         # Loss calculation
@@ -325,8 +325,9 @@ class Trainer:
         source = source.to(self.device)
         # Forward pass
         output = self.model(source) # reconstructed signal
-        if self.mode[1] == 'shift' and not self.is_training:
-            output, _ = align_to_reference(output, target)
+        # if self.mode[1] == 'shift' and not self.is_training:
+        if hparams.f5 > 0.:
+             output, _ = align_to_reference(output, target)
         self.last_output = output
         # if self.epoch % hparams.dbg_draw_rate == 0:
         #     self.plot_output_debug(target, output)
@@ -587,8 +588,8 @@ class Trainer:
                 # save checkpoint and log loss to cmd 
                 if self.epoch % self.save_every == 0:
                     print(f'-------Epoch {self.epoch}/{self.epochs}-------')
-                    print(f'Train loss l1: {train_loss.item():.6f}')
-                    print(f'Validation loss l1: {val_loss.item():.6f}')
+                    print(f'Total Train loss: {train_loss.item():.6f}')
+                    print(f'Total Validation loss: {val_loss.item():.6f}')
                     if self.loss_mode == 'all':
                         print(f'train mse loss: {train_mse_loss:.6f}')
                         print(f'train relative mse loss: {train_rel_mse_loss:.6f}')
@@ -598,6 +599,9 @@ class Trainer:
                         print(f'lr: {last_lr}')
                     # save checkpoint
                     self._save_checkpoint(self.epoch)
+                    if self.epoch >= 3000:
+                        hparams.f1 = 0.7
+                        hparams.f5 = 0.3
                 # plot last output
                 if self.epoch == self.epochs - 1:
                     folder = f'figures/cnn_{self.suffix}'
