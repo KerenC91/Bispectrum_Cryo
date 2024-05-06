@@ -201,7 +201,7 @@ def align_to_reference(x, xref):
     
     return x_aligned.reshape(org_shape), ind
 
-def rand_shift_signal(target, target_len, batch_size):
+def rand_shift_signal_org(target, target_len, batch_size):
     target = target.squeeze(1)
     shifts = np.random.randint(low=0, 
                                high=target_len, 
@@ -216,5 +216,24 @@ def rand_shift_signal(target, target_len, batch_size):
     
     return target, shifts
             
+def rand_shift_signal(target, target_len, batch_size):
+    target = target.squeeze(1)
+    
+    shifts = np.random.randint(low=0, 
+                               high=target_len, 
+                               size=batch_size)
+    
+    rows, column_indices = np.ogrid[:target.shape[0], :target.shape[1]]
+
+    # Always use a negative shift, so that column_indices are valid.
+    #shifts[shifts < 0]= target.shape[1]
+    #shifts += target.shape[1]
+    column_indices = (column_indices + shifts[:, np.newaxis]) % target.shape[1]
+    
+    target = target[rows, column_indices]
+
+    target = target.unsqueeze(1)
+    
+    return target, shifts
 
 
