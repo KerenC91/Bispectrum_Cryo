@@ -297,9 +297,9 @@ class Trainer:
 
         # Forward pass
         output = self.model(source) # reconstructed signal
-        # if self.mode[1] == 'shift' and not self.is_training:
-        if hparams.f5 > 0.:
-             output, _ = align_to_reference(output, target)
+        # if self.mode[1] == 'shift':# and not self.is_training:
+        # if hparams.f5 > 0.:
+        #     output, _ = align_to_reference(output, target)
         self.last_output = output
         self.last_target = target
         # Loss calculation
@@ -321,9 +321,9 @@ class Trainer:
         source = source.to(self.device)
         # Forward pass
         output = self.model(source) # reconstructed signal
-        # if self.mode[1] == 'shift' and not self.is_training:
-        if hparams.f5 > 0.:
-             output, _ = align_to_reference(output, target)
+        # if self.mode[1] == 'shift':# and not self.is_training:
+        # if hparams.f5 > 0.:
+        #     output, _ = align_to_reference(output, target)
         self.last_output = output
         # if self.epoch % hparams.dbg_draw_rate == 0:
         #     self.plot_output_debug(target, output)
@@ -568,9 +568,9 @@ class Trainer:
                     print(f'lr: {last_lr}')
                 # save checkpoint
                 self._save_checkpoint(self.epoch)
-                    if self.epoch >= 3000:
-                        hparams.f1 = 0.7
-                        hparams.f5 = 0.3
+                    # if self.epoch >= 3000:
+                    #     hparams.f1 = 0.7
+                    #     hparams.f5 = 0.3
             # plot last output
             if self.epoch == self.epochs - 1:
                 folder = f'figures/cnn_{self.suffix}'
