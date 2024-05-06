@@ -227,7 +227,8 @@ def rand_shift_signal(target, target_len, batch_size):
 
     # Always use a negative shift, so that column_indices are valid.
     #shifts[shifts < 0]= target.shape[1]
-    column_indices = column_indices - shifts[:, np.newaxis]
+    #shifts += target.shape[1]
+    column_indices = (column_indices + shifts[:, np.newaxis]) % target.shape[1]
     
     target = target[rows, column_indices]
 
