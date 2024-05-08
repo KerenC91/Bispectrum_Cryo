@@ -309,16 +309,18 @@ class Trainer:
         return loss
         
     def _run_batch_rand(self):#only in tarining
-        #target = torch.randn(self.batch_size, 1, self.target_len)
-        y = torch.randn(self.target_len)
-        circulant = lambda v: torch.cat([f := v, f[:-1]]).unfold(0, len(v), 1).flip(0)
-        target = circulant(torch.roll(y, -1))
-        target = target.unsqueeze(1)
+        if self.mode[1] == 'circular_shifts':
+            y = torch.randn(self.target_len)
+            circulant = lambda v: torch.cat([f := v, f[:-1]]).unfold(0, len(v), 1).flip(0)
+            target = circulant(torch.roll(y, -1))
+            target = target.unsqueeze(1)
+        else:
+            target = torch.randn(self.batch_size, 1, self.target_len)
         source, target = self.bs_calc(target)
-        # if self.mode[1] == 'shift':
-        #     target, shifts = rand_shift_signal(target, 
-        #                                        self.target_len, 
-        #                                        self.batch_size)
+        if self.mode[1] == 'shift':
+            target, shifts = rand_shift_signal(target, 
+                                                self.target_len, 
+                                                self.batch_size)
         
         # Move data to device
         target = target.to(self.device)
