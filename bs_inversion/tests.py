@@ -10,59 +10,9 @@ import numpy as np
 import torch
 import random
 
-
-def positional_encoding(x):
-    max_length = x.size(2)#10 # length of sequence, here length of signal
-    d_model = x.size(-1)
-    n = 10000.0
-    pe = torch.zeros(max_length, d_model)    
-
-    # create position column   
-    k = torch.arange(0, max_length).unsqueeze(1)  
-
-    # calc divisor for positional encoding 
-    div_term = torch.exp(                                 
-            torch.arange(0, d_model, 2) * -(math.log(n) / d_model)
-    )
-
-    # calc sine on even indices
-    pe[:, 0::2] = torch.sin(k * div_term)    
-
-    # calc cosine on odd indices   
-    pe[:, 1::2] = torch.cos(k * div_term)  
-
-    # add dimension     
-    pe = pe.unsqueeze(0).unsqueeze(0)
-    stacked_tensor = torch.cat([x, pe], dim=1)
-    
-    return stacked_tensor    
-
-def positional_encoding2(x):
-    max_length = x.size(2)#10 # length of sequence, here length of signal
-    d_model = x.size(-1)
-    n = 10000.0
-    pe = torch.zeros(max_length, d_model)    
-
-    # create position column   
-    k = torch.arange(0, max_length).unsqueeze(1)  
-
-    # calc divisor for positional encoding 
-    div_term = torch.exp(                                 
-            torch.arange(0, d_model, 2) * -(math.log(n) / d_model)
-    )
-
-    # calc sine on even indices
-    pe[:, 0::2] = torch.sin(k * div_term)    
-
-    # calc cosine on odd indices   
-    pe[:, 1::2] = torch.cos(k * div_term)  
-
-    # add dimension     
-    pe = pe.unsqueeze(0).unsqueeze(0)
-    pe = pe.repeat(1, 2, 1, 1)
-    stacked_tensor = torch.cat([x, pe], dim=2)
-    
-    return stacked_tensor 
+import pandas as pd
+import numpy as np
+ 
     
 def duplicate_and_expand(x, d_model):
     # x is of shape 1D n [ 1, 90,  6] n = 3, d_model = 3
@@ -293,10 +243,33 @@ def test_signals_correlation():
     print(f"done! ind={ind}, shift={shift}")
 
 def test_bs_py_matlab():
-    matlab_signal_path = '/scratch/home/kerencohen2/Git/HeterogeneousMRA/x1.csv'
+    matlab_signal_path = '/scratch/home/kerencohen2/Git/HeterogeneousMRA/x2.csv'
     x = np.loadtxt(matlab_signal_path, delimiter=" ")
     x = torch.tensor(x)
     bs_x = clculate_bispectrum_efficient(x)
+    to_csv(bs_x, '/scratch/home/kerencohen2/Git/HeterogeneousMRA/bs2_py.csv')
+    x_5 = torch.roll(x, 5)
+    bs_x_5 = clculate_bispectrum_efficient(x_5)
+    x_minus_5 = torch.roll(x, -5)
+    bs_x_minus_5 = clculate_bispectrum_efficient(x_minus_5)
+
+    
+    matlab_signal_path = '/scratch/home/kerencohen2/Git/HeterogeneousMRA/bs2.csv'
+    bs_matlab = np.genfromtxt(matlab_signal_path,delimiter=',', dtype=np.complex128)
+    bs_matlab = torch.tensor(bs_matlab)
+    diff = bs_matlab - bs_x
+    print(f'norm diff py mat: {    torch.norm(diff)}')
+    
+    diff_5_org = bs_x - bs_x_5
+    print(f'norm of diff_5_org is {torch.norm(diff_5_org)}')
+    diff_neg_5_org = bs_x - bs_x_minus_5 
+    print(f'norm of diff_neg_5_org is {torch.norm(diff_neg_5_org)}')
+    print('done')
+    print(f'norm: {torch.norm(bs_x)}, '
+          f'{torch.norm(bs_x_5)}, '
+          f'{torch.norm(bs_x_minus_5)}')
+
+
     
 if __name__ == "__main__":
     test_bs_py_matlab()

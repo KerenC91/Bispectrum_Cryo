@@ -20,25 +20,25 @@ hparams = HParams(
     #####################################
     DEBUG = True,
     debug_model = 3,
-    debug_N = 20,
+    debug_N = 5,
     debug_last_ch = 256,# 8 for 1, 2,
     debug_pre_conv_channels = [8, 32, 256], # [8, 32, 64, debug_last_ch]
     debug_pre_residuals = 11,
     debug_up_residuals = 3,
     debug_post_residuals = 14,
     debug_n_heads = 1,
-    debug_mode = ['opt', 'shift'],
+    debug_mode = ['rand', 'shift'],
     debug_batch_size = 1,
     debug_loss_mode = 'all',
-    debug_train_data_size = 20,
+    debug_train_data_size = 5,
     debug_val_data_size = 10,
     debug_epochs = 7500,
     debug_channels_model1 = [256, 8],
     debug_channels_model2 = [256, 64],
     debug_channels_model3 = [256, 8], # [256, debug_last_ch]
     debug_scheduler = "Manual",
-    debug_read_baseline = 0,
-    debug_comp_test_name_m = 'test_1_sample',
+    debug_read_baseline = 2,
+    debug_comp_test_name_m = 'test_1_sample_len_5',
 
     #####################################
     # Training config
@@ -55,11 +55,11 @@ hparams = HParams(
     #####################################
     # loss config 
     #####################################
-    f1=0.,#_loss_sc
+    f1=1.,#_loss_sc
     f2=0.,#_loss_log_sc
     f3=0.,#_loss_freq
     f4=0.,#loss_weighted_phase
-    f5=1.,#_loss_l1
+    f5=0.,#_loss_l1
     ##########################
     # dynamic lr (scheduler)
     ##########################

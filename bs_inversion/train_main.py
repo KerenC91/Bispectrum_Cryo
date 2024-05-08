@@ -17,7 +17,8 @@ from torch import nn
 from compare_to_baseline import read_tensor_from_matlab
 
 
-
+#torch.set_printoptions(precision=15)
+#torch.set_default_dtype(torch.float64)
 # Set the same seed for reproducibility
 #torch.manual_seed(1234)
 
@@ -60,30 +61,33 @@ def set_read_func(folder_matlab):
         f = read_org
     return f
 
+def read_dataset_from_baseline(comp_baseline_folders, data_size, N):
+    target = torch.zeros(data_size, 1, N)
 
+    _, folder_matlab, _ = comp_baseline_folders
+    data_size = min(data_size, len(os.listdir(folder_matlab)))
+
+    for i in range(data_size):
+
+        folder = os.path.join(folder_matlab, f'sample{i}')
+        read_func = set_read_func(folder_matlab)
+        
+        target[i] = read_func(folder)   
+    
+    return target
+    
 def create_dataset(device, data_size, N, read_baseline, mode, 
                    comp_baseline_folders):
     bs_calc = BispectrumCalculator(N, device).to(device)
+    print(f'read_baseline={read_baseline}, mode={mode}')
     if read_baseline: # in val dataset
-        target = torch.zeros(data_size, 1, N)
-    
-        _, folder_matlab, _ = \
-                comp_baseline_folders
-        data_size = min(data_size, len(os.listdir(folder_matlab)))
-        #print(f'data_size={data_size}')
-
-        for i in range(data_size):
-
-            folder = os.path.join(folder_matlab, f'sample{i}')
-            read_func = set_read_func(folder_matlab)
-            
-            target[i] = read_func(folder)
-
+        target = read_dataset_from_baseline(comp_baseline_folders, data_size, N)
     else:
-        print(f'read_baseline={read_baseline}, mode[0]={mode[0]}')
         if mode[0] == 'opt':
+            # Create random dataset
             target = torch.randn(data_size, 1, N)
         elif mode[0] == 'rand':
+            # Initialize dataset to zeros and create data on the fly 
             target = torch.zeros(data_size, 1, N)
     target.to(device)
     source, target = bs_calc(target)
@@ -346,15 +350,14 @@ def main(args):
     if args.log_level >= 2:
     	print_model_summary(args, model)
 
-    # set train dataset and dataloader
-    
+    # Set train dataset and dataloader
     read_baseline_train = True if args.read_baseline == 1 else False
     train_dataset = create_dataset(device, args.train_data_size, args.N,
                                    read_baseline_train, args.mode,
                                    comp_baseline_folders)
 
     train_loader = prepare_data_loader(train_dataset, args)
-    # set validation dataset and dataloader 
+    # Set validation dataset and dataloader 
     read_baseline_val = True if args.read_baseline == 2 else False
     val_dataset = create_dataset(device, args.val_data_size, args.N,
                                  read_baseline_val, args.mode,

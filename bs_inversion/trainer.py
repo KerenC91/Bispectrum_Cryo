@@ -134,9 +134,9 @@ class Trainer:
 
         """
         # Get magnitudes
-        bs_pred_mag = torch.abs(bs_pred)
-        bs_gt_mag = torch.abs(bs_gt)
-        return torch.norm(bs_pred_mag - bs_gt_mag) / torch.norm(bs_gt_mag)
+        #bs_pred_mag = torch.abs(bs_pred)
+        #bs_gt_mag = torch.abs(bs_gt)
+        return torch.norm(bs_pred - bs_gt) / torch.norm(bs_gt)
     # target - ground truth image, source - Bispectrum of ground truth image
     # might be multiple targets and sources (batch size > 1)
 
@@ -297,9 +297,9 @@ class Trainer:
 
         # Forward pass
         output = self.model(source) # reconstructed signal
-        # if self.mode[1] == 'shift':# and not self.is_training:
+        if self.mode[1] == 'shift' and not self.is_training:
         # if hparams.f5 > 0.:
-        #     output, _ = align_to_reference(output, target)
+             output, _ = align_to_reference(output, target)
         self.last_output = output
         self.last_target = target
         # Loss calculation
@@ -308,13 +308,17 @@ class Trainer:
 
         return loss
         
-    def _run_batch_rand(self):
-        target = torch.randn(self.batch_size, 1, self.target_len)
+    def _run_batch_rand(self):#only in tarining
+        #target = torch.randn(self.batch_size, 1, self.target_len)
+        y = torch.randn(self.target_len)
+        circulant = lambda v: torch.cat([f := v, f[:-1]]).unfold(0, len(v), 1).flip(0)
+        target = circulant(torch.roll(y, -1))
+        target = target.unsqueeze(1)
         source, target = self.bs_calc(target)
-        if self.mode[1] == 'shift':
-            target, shifts = rand_shift_signal(target, 
-                                               self.target_len, 
-                                               self.batch_size)
+        # if self.mode[1] == 'shift':
+        #     target, shifts = rand_shift_signal(target, 
+        #                                        self.target_len, 
+        #                                        self.batch_size)
         
         # Move data to device
         target = target.to(self.device)
@@ -557,8 +561,8 @@ class Trainer:
             # save checkpoint and log loss to cmd 
             if self.epoch % self.save_every == 0:
                 print(f'-------Epoch {self.epoch}/{self.epochs}-------')
-                    print(f'Total Train loss: {train_loss:.6f}')
-                    print(f'Total Validation loss: {val_loss:.6f}')
+                print(f'Total Train loss: {train_loss:.6f}')
+                print(f'Total Validation loss: {val_loss:.6f}')
                 if self.loss_mode == 'all':
                     print(f'train mse loss: {train_mse_loss:.6f}')
                     print(f'train relative mse loss: {train_rel_mse_loss:.6f}')
