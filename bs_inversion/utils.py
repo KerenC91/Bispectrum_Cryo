@@ -57,13 +57,8 @@ def clculate_bispectrum_efficient(x):
 
     Parameters
     ----------
-    y : torch, torch NX1 size, float (could be complex) 
-        The DFT of the signal.
-    shifted : Bool, optional
-        True if the DFT is already shifted, False if not, and then 
-        performing the shift manually. The default is True.
-        note: for shifted = True the results are significantly different, 
-        hence using shifted=False
+    x : torch N size, float
+        signal.
     Returns
     -------
     Bx : torch NXNX1 size, complex-float
@@ -72,8 +67,11 @@ def clculate_bispectrum_efficient(x):
     """
     y = torch.fft.fft(x)
     circulant = lambda v: torch.cat([f := v, f[:-1]]).unfold(0, len(v), 1).flip(0)
-    Bx = y.unsqueeze(1) *\
-        torch.conj(y).T.unsqueeze(0) * circulant(torch.roll(y, -1))
+    # Bx = (y.unsqueeze(1) *\
+    #     torch.conj(y).T.unsqueeze(0)) * circulant(torch.roll(y, -1))
+    C = circulant(torch.roll(y, -1))
+    Bx = y.unsqueeze(1) @ y.conj().unsqueeze(0)
+    Bx = Bx * C
     return Bx
 
 
@@ -90,12 +88,12 @@ class BispectrumCalculator(nn.Module):
     def _create_data(self, target):
         # Create data
         target = target.clone()
-        bs = self.calculator(target)
+        bs = self.calculator(target.squeeze(0))
         bs_real = bs.real.float()
         bs_imag = bs.imag.float()
-        source = torch.stack([bs_real, bs_imag], dim=1)
+        source = torch.stack([bs_real, bs_imag], dim=0)
                
-        return source, target.unsqueeze(0) 
+        return source, target 
     # target: signal 1Xtarget_len
     # source: bs     2Xtarget_lenXtarget_len
     def forward(self, target):
