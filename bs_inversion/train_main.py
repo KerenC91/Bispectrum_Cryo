@@ -429,10 +429,11 @@ if __name__ == "__main__":
     parser.add_argument('--lr', type=float, default=1e-3, metavar='f',
             help='learning rate (initial for dynamic lr, otherwise fixed)')  
     parser.add_argument('--mode', type=str, nargs='+', default=['opt'],
-            help= '[mode, add], mode in {\'rand\'\,\'opt\'}, add (optioanl) in {\'shift\'}'
+            help= '[mode, add], mode in {\'rand\'\,\'opt\'}, add (optioanl) in {\'shift\', \'circular_shifts\'}'
                 '\'rand\': Create random data during training.\n'
                     '\'opt\': Create a fixed dataset'
-                    '\'shift\': Randomly shift the signal.\n') 
+                    '\'shift\': Randomly shift the signal.\n'
+                    '\'circular_shifts\': shift the signal circularly for every bbatch') 
     parser.add_argument('--suffix', type=str, default='',
             help='suffix to add to the name of the cnn yml file')  
     parser.add_argument('--config_mode', type=int, default=0, 

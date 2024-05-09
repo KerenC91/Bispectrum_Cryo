@@ -27,7 +27,7 @@ hparams = HParams(
     debug_up_residuals = 3,
     debug_post_residuals = 14,
     debug_n_heads = 1,
-    debug_mode = ['rand', 'shift'],
+    debug_mode = ['rand', 'circular_shifts'],
     debug_batch_size = 1,
     debug_loss_mode = 'all',
     debug_train_data_size = 5,
@@ -55,11 +55,11 @@ hparams = HParams(
     #####################################
     # loss config 
     #####################################
-    f1=1.,#_loss_sc
+    f1=0.,#_loss_sc
     f2=0.,#_loss_log_sc
     f3=0.,#_loss_freq
     f4=0.,#loss_weighted_phase
-    f5=0.,#_loss_l1
+    f5=1.,#_loss_l1
     ##########################
     # dynamic lr (scheduler)
     ##########################
