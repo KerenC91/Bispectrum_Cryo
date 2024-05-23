@@ -26,68 +26,6 @@ def duplicate_and_expand(x, d_model):
     #tensor([ 1.,  1.,  1., 90., 90., 90.,  6.,  6.,  6.])
     return expanded_x
 
-    
-class PositionalEncoding(nn.Module):
-  def __init__(self, d_model: int, dropout: float = 0.1, max_length: int = 5000):
-    """
-    Args:
-      d_model:      dimension of embeddings
-      dropout:      randomly zeroes-out some of the input
-      max_length:   max sequence length
-    """
-    # inherit from Module
-    super().__init__()     
-
-    # initialize dropout                  
-    self.dropout = nn.Dropout(p=dropout)      
-
-    # create tensor of 0s
-    pe = torch.zeros(max_length, d_model)    
-
-    # create position column   
-    k = torch.arange(0, max_length).unsqueeze(1)  
-
-    # calc divisor for positional encoding 
-    div_term = torch.exp(                                 
-            torch.arange(0, d_model, 2) * -(math.log(10000.0) / d_model)
-    )
-
-    # calc sine on even indices
-    pe[:, 0::2] = torch.sin(k * div_term)    
-
-    # calc cosine on odd indices   
-    pe[:, 1::2] = torch.cos(k * div_term)  
-
-    # add dimension     
-    pe = pe.unsqueeze(0)          
-
-    # buffers are saved in state_dict but not trained by the optimizer                        
-    self.register_buffer("pe", pe)                        
-
-  def forward(self, x):
-    """
-    Args:
-      x:        embeddings (batch_size, seq_length, d_model)
-    
-    Returns:
-                embeddings + positional encodings (batch_size, seq_length, d_model)
-    """
-    # add positional encoding to the embeddings
-    x = x + self.pe[:, : x.size(1)].requires_grad_(False) 
-
-    # perform dropout
-    return self.dropout(x)
-
-
-
-def test_positional_encoding(type=1):
-    # create signal
-    x = torch.randn(1, 2, 10, 10)
-    if type == 1:
-        pe = positional_encoding(x)
-    else:
-        pe = positional_encoding2(x)
-
 
 def test_strided_conv_height():
     batch_size = 1
@@ -247,7 +185,6 @@ def test_bs_py_matlab():
     x = np.loadtxt(matlab_signal_path, delimiter=" ")
     x = torch.tensor(x)
     bs_x = clculate_bispectrum_efficient(x)
-    to_csv(bs_x, '/scratch/home/kerencohen2/Git/HeterogeneousMRA/bs2_py.csv')
     x_5 = torch.roll(x, 5)
     bs_x_5 = clculate_bispectrum_efficient(x_5)
     x_minus_5 = torch.roll(x, -5)
@@ -272,9 +209,9 @@ def test_bs_py_matlab():
 
     
 if __name__ == "__main__":
-    test_bs_py_matlab()
+    #test_bs_py_matlab()
     #test_bs_correlation()
-    #test_signals_correlation()
+    test_signals_correlation()
     #read_test_from_matlab()
     #test_VectorProcessor()
     #test_strided_conv_height()
