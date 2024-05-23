@@ -26,8 +26,6 @@ def duplicate_and_expand(x, d_model):
     #tensor([ 1.,  1.,  1., 90., 90., 90.,  6.,  6.,  6.])
     return expanded_x
 
-    
-
 
 def test_strided_conv_height():
     batch_size = 1
@@ -187,7 +185,6 @@ def test_bs_py_matlab():
     x = np.loadtxt(matlab_signal_path, delimiter=" ")
     x = torch.tensor(x)
     bs_x = clculate_bispectrum_efficient(x)
-    to_csv(bs_x, '/scratch/home/kerencohen2/Git/HeterogeneousMRA/bs2_py.csv')
     x_5 = torch.roll(x, 5)
     bs_x_5 = clculate_bispectrum_efficient(x_5)
     x_minus_5 = torch.roll(x, -5)
@@ -212,9 +209,9 @@ def test_bs_py_matlab():
 
     
 if __name__ == "__main__":
-    test_bs_py_matlab()
+    #test_bs_py_matlab()
     #test_bs_correlation()
-    #test_signals_correlation()
+    test_signals_correlation()
     #read_test_from_matlab()
     #test_VectorProcessor()
     #test_strided_conv_height()

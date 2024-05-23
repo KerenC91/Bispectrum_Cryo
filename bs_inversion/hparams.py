@@ -55,11 +55,11 @@ hparams = HParams(
     #####################################
     # loss config 
     #####################################
-    f1=0.,#_loss_sc
+    f1=1.,#_loss_sc
     f2=0.,#_loss_log_sc
     f3=0.,#_loss_freq
     f4=0.,#loss_weighted_phase
-    f5=1.,#_loss_l1
+    f5=0.,#_loss_l1
     ##########################
     # dynamic lr (scheduler)
     ##########################

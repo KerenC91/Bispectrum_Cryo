@@ -130,7 +130,7 @@ class Trainer:
         Returns
         -------
         TYPE    torch float
-            || |BS(rec_s)| - |BS(s)| ||_F / || |BS(s)| ||_F.
+            || BS(rec_s) - BS(s) ||_F / || BS(s) ||_F.
 
         """
         # Get magnitudes
@@ -297,7 +297,7 @@ class Trainer:
 
         # Forward pass
         output = self.model(source) # reconstructed signal
-        if self.mode[1] == 'shift' and not self.is_training:
+        if not self.is_training:
         # if hparams.f5 > 0.:
              output, _ = align_to_reference(output, target)
         self.last_output = output
