@@ -104,8 +104,28 @@ class BispectrumCalculator(nn.Module):
         for i in range(batch_size):
             source[i], target[i] = self._create_data(target[i])
         return source, target  # Stack processed vectors
+
+
+
+class BatchAligneToReference(nn.Module):
+    def __init__(self, device):
+        super().__init__()
+        self._align = align_to_reference
+        self.device = device
+        
+    def forward(self, x, xref):
+        batch_size = x.shape[0]
+        # Iterate over the batch dimension using indexing
+        x_aligned = torch.zeros_like(x).to(self.device)
+        inds = torch.zeros(batch_size).to(self.device)
+        
+        for i in range(batch_size):
+            aligned, inds[i] = \
+                self._align(x[i].squeeze(0), xref[i].squeeze(0))
+            x_aligned[i] = aligned.unsqueeze(0)
+        return x_aligned, inds  # Stack processed vectors
     
-    
+   
 def align_to_reference(x, xref):
     """
     Aligns a signal (x) to a reference signal (xref) using circular shift.
@@ -120,7 +140,7 @@ def align_to_reference(x, xref):
     
     # Check if input arrays have the same size
     assert x.shape == xref.shape, "x and xref must have identical size"
-    
+    assert len(x.shape) == 1, "x shape is greater than 1 dim"
     org_shape = x.shape
     
     # Reshape to column vectors
@@ -141,22 +161,7 @@ def align_to_reference(x, xref):
     x_aligned = torch.roll(x, ind)
     
     return x_aligned.reshape(org_shape), ind
-
-def rand_shift_signal_org(target, target_len, batch_size):
-    target = target.squeeze(1)
-    shifts = np.random.randint(low=0, 
-                               high=target_len, 
-                               size=(batch_size, 1))
-    mask = np.tile(np.arange(0, target_len), 
-                   (batch_size, 1)) + shifts
-    mask %= target_len
-    
-    for i in range(batch_size):
-        target[i] = target[i][mask[i]]
-    target = target.unsqueeze(1)
-    
-    return target, shifts
-            
+           
 def rand_shift_signal(target, target_len, batch_size):
     target = target.squeeze(1)
     

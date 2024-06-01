@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 import math
 from utils import (calculate_bispectrum_power_spectrum_efficient,
-            clculate_bispectrum_efficient, align_to_reference, read_csv_from_matlab)
+            clculate_bispectrum_efficient, BatchAligneToReference, 
+            read_csv_from_matlab, rand_shift_signal, align_to_reference)
 import torch
 import torch.nn as nn
 import os
@@ -12,7 +13,7 @@ import random
 
 import pandas as pd
 import numpy as np
- 
+import matplotlib.pyplot as plt 
     
 def duplicate_and_expand(x, d_model):
     # x is of shape 1D n [ 1, 90,  6] n = 3, d_model = 3
@@ -177,8 +178,28 @@ def test_signals_correlation():
     shift = 5
     xref = torch.randn(n)
     x = torch.roll(xref, shift)
+    #
     x_aligned_reshaped, ind = align_to_reference(x, xref)
     print(f"done! ind={ind}, shift={shift}")
+    
+def test_signals_correlation_batch():
+    if torch.cuda.is_available():
+        device = 0  # Set device to first available GPU
+        torch.cuda.set_device(device)
+        print(f"Using CUDA device: {device}")
+    else:
+        print("CUDA not available. Training on CPU.")
+        device = torch.device("cpu")
+  
+    n = 6
+    shift = 5
+    batch_size = 5
+    xref = torch.randn(batch_size, 1, n)
+    x, shifts = rand_shift_signal(xref, n, batch_size)
+    balign = BatchAligneToReference(device)
+    x_aligned_reshaped, ind = balign(x, xref)
+    print(f"done! ind={ind}, shift={shift}")
+
 
 def test_bs_py_matlab():
     matlab_signal_path = '/scratch/home/kerencohen2/Git/HeterogeneousMRA/x2.csv'
@@ -206,12 +227,32 @@ def test_bs_py_matlab():
           f'{torch.norm(bs_x_5)}, '
           f'{torch.norm(bs_x_minus_5)}')
 
+def test_align_data_plot(i):
+    path = f"/home/kerencohen2/Git/Bispectrum_Cryo/bs_inversion/baseline_comp/102_sc_rand_align_val/data_from_python/sample{i}"
+    out_path = os.path.join(path, "comp.png")
+    output_path = os.path.join(path, "x_est.csv")
+    target_path = os.path.join(path, "x_true.csv")
+    output = np.loadtxt(output_path, delimiter=" ")
+    target = np.loadtxt(target_path, delimiter=" ")
+    output, _ = align_to_reference(torch.tensor(output), 
+                                   torch.tensor(target))
+    output = np.array(output)
+    plt.figure()
+    plt.title('Comparison between original signal and its reconstructions')
+    plt.plot(target, label='org')
+    plt.plot(output, label='tested')
+    plt.ylabel('signal')
+    plt.xlabel('time')
+    plt.legend()
+    plt.savefig(out_path)        
+    plt.close()
 
     
 if __name__ == "__main__":
     #test_bs_py_matlab()
     #test_bs_correlation()
-    test_signals_correlation()
+    test_align_data_plot(6)
+    #test_signals_correlation_batch()
     #read_test_from_matlab()
     #test_VectorProcessor()
     #test_strided_conv_height()
