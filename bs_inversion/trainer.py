@@ -1,7 +1,7 @@
 import os
 import wandb
 import torch 
-from utils import BispectrumCalculator
+from utils import BispectrumCalculator, BatchAligneToReference
 from hparams import hparams
 import matplotlib.pyplot as plt
 import numpy as np
@@ -11,7 +11,7 @@ import torch.distributed as dist
 from torch.distributed import init_process_group, destroy_process_group, all_reduce
 import gc
 import sys
-from utils import align_to_reference, rand_shift_signal
+from utils import rand_shift_signal
 
 class Trainer:
     def __init__(self, model, 
@@ -57,6 +57,7 @@ class Trainer:
         else:
             self.loss_f = self._loss
         self.bs_calc = BispectrumCalculator(self.target_len, self.device).to(self.device)
+        self.aligner = BatchAligneToReference(self.device).to(self.device)
         self.folder_test, self.folder_matlab, self.folder_python = \
                         comp_baseline_folders
         self.is_training = True
@@ -299,7 +300,7 @@ class Trainer:
         output = self.model(source) # reconstructed signal
         if not self.is_training:
         # if hparams.f5 > 0.:
-             output, _ = align_to_reference(output, target)
+             output, _ = self.aligner(output, target)
         self.last_output = output
         self.last_target = target
         # Loss calculation
@@ -329,7 +330,7 @@ class Trainer:
         output = self.model(source) # reconstructed signal
         # if self.mode[1] == 'shift':# and not self.is_training:
         # if hparams.f5 > 0.:
-        #     output, _ = align_to_reference(output, target)
+        #     output, _ = self.aligner(output, target)
         self.last_output = output
         # if self.epoch % hparams.dbg_draw_rate == 0:
         #     self.plot_output_debug(target, output)
@@ -499,6 +500,7 @@ class Trainer:
             source = source.to(self.device)
             # Forward pass
             output = self.model(source) # reconstructed signal
+            output, _ = self.aligner(output, target)
             self.save_python_test_data(idx.item(), output, target)
             
     def save_python_test_data(self, i, x_est, x_true):
