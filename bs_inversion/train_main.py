@@ -286,8 +286,17 @@ def set_scheduler(scheduler_name, optimizer, epochs):
                 steps_per_epoch =1,
                 epochs= epochs,
                 pct_start = hparams.cyc_lr_pct_start,
-                anneal_strategy=hparams.cyc_lr_anneal_strategy)                
-    return scheduler
+                anneal_strategy=hparams.cyc_lr_anneal_strategy)  
+        elif scheduler_name == 'CosineAnnealingLR':
+            scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                optimizer=optimizer,
+                T_max=hparams.cos_ann_lr_T_max) 
+        elif scheduler_name == 'CyclicLR':        
+            scheduler = optim.lr_scheduler.CyclicLR(
+                optimizer=optimizer,
+                base_lr=hparams.cyclic_lr_base_lr, 
+                max_lr=hparams.cyclic_lr_max_lr) 
+        return scheduler
 
     
 def update_suffix(args):
@@ -423,7 +432,8 @@ if __name__ == "__main__":
     parser.add_argument('--val_data_size', type=int, default=100, metavar='N',
             help='the size of the validate data')  
     parser.add_argument('--scheduler', type=str, default='None',
-            help='\'StepLR\', \'ReduceLROnPlateau\', \'Manual\'. '
+            help='\'StepLR\', \'ReduceLROnPlateau\', \'OneCycleLR\','
+            ' \'CosineAnnealingLR\', \'CyclicLR\', \'Manual\'. '
             'Update configurtion parametes accordingly. '
             'default: \'None\' - no change in lr') 
     parser.add_argument('--lr', type=float, default=1e-3, metavar='f',

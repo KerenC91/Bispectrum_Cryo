@@ -567,7 +567,7 @@ class Trainer:
                         self.optimizer.param_groups[0]['lr'] *= hparams.manual_lr_f 
                 elif self.scheduler_name == 'ReduceLROnPlateau':
                     self.scheduler.step(train_loss)
-                elif self.scheduler_name == 'StepLR' or self.scheduler_name == "OneCycleLR":
+                elif self.scheduler_name in ['StepLR', 'OneCycleLR', 'CosineAnnealingLR']:
                     self.scheduler.step()
 
             if self.epoch % self.save_every == 0:

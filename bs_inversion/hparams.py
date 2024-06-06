@@ -79,7 +79,12 @@ hparams = HParams(
     cyc_lr_pct_start = 0.5622271055325254,
     cyc_lr_anneal_strategy = 'cos',
     
+    # CosineAnnealingLR
+    cos_ann_lr_T_max = 1000,
     
+    # CyclicLR
+    cyclic_lr_base_lr=1e-6, 
+    cyclic_lr_max_lr=1e-2,
     ##########################
     # optimizer
     ##########################
