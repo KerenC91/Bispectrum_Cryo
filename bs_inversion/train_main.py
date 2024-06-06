@@ -366,6 +366,7 @@ def set_scheduler(scheduler_name, optimizer, epochs):
                 base_lr=hparams.cyclic_lr_base_lr, 
                 max_lr=hparams.cyclic_lr_max_lr) 
         return scheduler
+    
 
     
 def update_suffix(args, debug):
