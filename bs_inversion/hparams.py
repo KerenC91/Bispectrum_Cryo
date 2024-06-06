@@ -27,7 +27,7 @@ hparams = HParams(
     debug_up_residuals = 3,
     debug_post_residuals = 14,
     debug_n_heads = 1,
-    debug_mode = ['rand', 'circular_shifts'],
+    debug_mode = ['rand', 'none'],
     debug_batch_size = 1,
     debug_loss_mode = 'all',
     debug_train_data_size = 5,
@@ -39,7 +39,7 @@ hparams = HParams(
     debug_scheduler = "Manual",
     debug_read_baseline = 2,
     debug_comp_test_name_m = 'test_1_sample_len_5',
-
+    debug_K = 1,
     #####################################
     # Training config
     #####################################
@@ -80,6 +80,7 @@ hparams = HParams(
     cyc_lr_max_lr = 0.0015091109872566496,# taken from trial 152
     cyc_lr_pct_start = 0.5622271055325254,
     cyc_lr_anneal_strategy = 'cos',
+    cyc_lr_three_pahse= True,
     
     # CosineAnnealingLR
     cos_ann_lr_T_max = 1000,

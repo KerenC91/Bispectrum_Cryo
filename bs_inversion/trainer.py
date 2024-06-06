@@ -36,6 +36,7 @@ class Trainer:
         self.train_data_size = args.train_data_size
         self.val_data_size = args.val_data_size
         self.target_len = args.N
+        self.signals_count = args.K
         self.save_every = args.save_every
         self.model = model.to(self.device)
         self.wandb_flag = wandb_flag
@@ -85,8 +86,25 @@ class Trainer:
         return total_loss
 
     def _loss_all(self, pred, target):
-        bs_pred, pred = self.bs_calc(pred)
-        bs_target, target = self.bs_calc(target)
+        if self.signals_count > 1:
+            preds = torch.zeros(self.signals_count, self.batch_size, 1, self.target_len)
+            targets = torch.zeros(self.signals_count, self.batch_size, 1, self.target_len)
+            bs_preds = torch.zeros(self.signals_count, self.batch_size, 2, self.target_len, self.target_len)
+            bs_targets = torch.zeros(self.signals_count, self.batch_size, 2, self.target_len, self.target_len)
+
+            # maybe add rotation test          
+            for j in range(self.signals_count):
+                preds[j] = pred[:, :,j*self.target_len:j*self.target_len+self.target_len]
+                bs_preds[j], preds[j] = self.bs_calc(preds[j])
+                
+                targets[j] = target[:, :,j*self.target_len:j*self.target_len+self.target_len]
+                bs_targets[j], targets[j] = self.bs_calc(targets[j])
+                
+            bs_pred = torch.mean(bs_preds, dim=0)
+            bs_target = torch.mean(bs_targets, dim=0)
+        else:
+            bs_pred, pred = self.bs_calc(pred)
+            bs_target, target = self.bs_calc(target)            
         total_loss = 0.
         if hparams.f1 != 0:
             loss_sc = self._loss_sc(bs_pred, bs_target)
@@ -158,10 +176,7 @@ class Trainer:
             || log(|BS(s)| + epsilon) - log(|BS(rec_s)| + epsilon) ||_1
 
         """
-        # Get magnitudes
-        bs_pred_mag = torch.abs(bs_pred)
-        bs_gt_mag = torch.abs(bs_gt)
-        return torch.norm(torch.log(bs_gt_mag + eps) - torch.log(bs_pred_mag + eps), p=1)
+        return 0
     # target - ground truth image, source - Bispectrum of ground truth image
     # might be multiple targets and sources (batch size > 1)
 
@@ -316,8 +331,18 @@ class Trainer:
             target = circulant(torch.roll(y, -1))
             target = target.unsqueeze(1)
         else:
-            target = torch.randn(self.batch_size, 1, self.target_len)
-        source, target = self.bs_calc(target)
+            target = torch.randn(self.batch_size, 1, self.target_len * self.signals_count)
+        if self.signals_count > 1:
+            ch = 2
+            source = torch.zeros(self.batch_size, ch, self.target_len, self.target_len).to(self.device)
+    
+            for j in range(self.signals_count):
+                s, _ = self.bs_calc(target[:, :, j*self.target_len:j*self.target_len+self.target_len])
+                source += s
+            source /= self.signals_count
+        else:
+            source, target = self.bs_calc(target)
+
         if self.mode[1] == 'shift':
             target, shifts = rand_shift_signal(target, 
                                                 self.target_len, 

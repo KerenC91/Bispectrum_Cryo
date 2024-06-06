@@ -75,7 +75,23 @@ def read_dataset_from_baseline(comp_baseline_folders, data_size, N):
         target[i] = read_func(folder)   
     
     return target
+   
+def read_dataset_from_baseline2(comp_baseline_folders, data_size, N, K=2):
+    new_data_size = int(data_size / K)
+    target = torch.zeros(new_data_size, 1, K * N)
+
+    _, folder_matlab, _ = comp_baseline_folders
+    data_size = min(new_data_size, int(len(os.listdir(folder_matlab)) / K))
+
+    for i in range(int(data_size / K)):
+        for j in range(K):
+            folder = os.path.join(folder_matlab, f'sample{i+j}')
+            read_func = set_read_func(folder_matlab)
+            
+            target[i,:,j*N:j*N+N] = read_func(folder)   
     
+    return target 
+
 def create_dataset(device, data_size, N, read_baseline, mode, 
                    comp_baseline_folders):
     bs_calc = BispectrumCalculator(N, device).to(device)
@@ -91,6 +107,33 @@ def create_dataset(device, data_size, N, read_baseline, mode,
             target = torch.zeros(data_size, 1, N)
     target.to(device)
     source, target = bs_calc(target)
+    if mode[0] == 'opt' and mode[1] == 'shift' and not read_baseline:
+            target, shifts = rand_shift_signal(target, N, data_size)
+    dataset = UnitVecDataset(source, target)
+
+    return dataset
+
+def create_dataset2(device, data_size, N, read_baseline, mode, 
+                   comp_baseline_folders, K=2):
+    bs_calc = BispectrumCalculator(N, device).to(device)
+    print(f'read_baseline={read_baseline}, mode={mode}')
+    if read_baseline: # in val dataset
+        target = read_dataset_from_baseline2(comp_baseline_folders, data_size, N)
+    else:
+        if mode[0] == 'opt':
+            # Create random dataset
+            target = torch.randn(int(data_size / K), 1, K * N)
+        elif mode[0] == 'rand':
+            # Initialize dataset to zeros and create data on the fly 
+            target = torch.zeros(int(data_size / K), 1, K * N)
+    target.to(device)
+    ch = 2
+    source = torch.zeros(int(data_size / K), ch, N, N).to(device)
+
+    for j in range(K):
+        s, _ = bs_calc(target[:, :, j*N:j*N+N])
+        source += s
+    source /= K
     if mode[0] == 'opt' and mode[1] == 'shift' and not read_baseline:
             target, shifts = rand_shift_signal(target, N, data_size)
     dataset = UnitVecDataset(source, target)
@@ -168,11 +211,11 @@ def get_model(device, args):
     hparams.pre_conv_channels[-1] = hparams.last_ch
     channels[-1] = hparams.last_ch
     cnt, k, s = hparams.reduce_height
-    reduce_height = update_reduce_height_cnt(k, s, args.N)
+    reduce_height = update_reduce_height_cnt(k, s, args.N * args.K)
     activation = set_activation(hparams.activation)
     model = CNNBS(
         device=device,
-        input_len=args.N,
+        input_len=args.N * args.K,
         n_heads=args.n_heads,
         channels=channels,
         b_maxout = args.maxout,
@@ -214,7 +257,7 @@ def set_debug_data(args):
     hparams.last_ch = hparams.debug_last_ch
     args.read_baseline = hparams.debug_read_baseline
     args.scheduler = hparams.debug_scheduler
-    
+    args.K = hparams.debug_K
     return args
     
     
@@ -298,7 +341,7 @@ def set_scheduler(scheduler_name, optimizer, epochs):
                 factor=hparams.reduce_lr_factor,
                 threshold=hparams.reduce_lr_threshold,
                 patience=hparams.reduce_lr_patience,
-                cool_down=hparams.reduce_lr_cool_down)
+                cooldown=hparams.reduce_lr_cooldown)
         elif scheduler_name == 'StepLR':
             scheduler = optim.lr_scheduler.StepLR(
                 optimizer=optimizer,
@@ -307,11 +350,12 @@ def set_scheduler(scheduler_name, optimizer, epochs):
         elif scheduler_name == 'OneCycleLR':
             scheduler = optim.lr_scheduler.OneCycleLR(
                 optimizer=optimizer,
-                max_lr = hparams.cyc_lr_max_lr,
-                steps_per_epoch =1,
-                epochs= epochs,
-                pct_start = hparams.cyc_lr_pct_start,
-                anneal_strategy=hparams.cyc_lr_anneal_strategy)  
+                max_lr=hparams.cyc_lr_max_lr,
+                steps_per_epoch=1,
+                epochs=epochs,
+                pct_start=hparams.cyc_lr_pct_start,
+                anneal_strategy=hparams.cyc_lr_anneal_strategy,
+                three_pahse=hparams.cyc_lr_three_pahse)  
         elif scheduler_name == 'CosineAnnealingLR':
             scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 optimizer=optimizer,
@@ -361,16 +405,26 @@ def main(args):
 
     # Set train dataset and dataloader
     read_baseline_train = True if args.read_baseline == 1 else False
-    train_dataset = create_dataset(device, args.train_data_size, args.N,
-                                   read_baseline_train, args.mode,
-                                   comp_baseline_folders)
+    if args.K > 1:
+        train_dataset = create_dataset2(device, args.train_data_size, args.N,
+                                       read_baseline_train, args.mode,
+                                       comp_baseline_folders, args.K)   
+    else:#1
+        train_dataset = create_dataset(device, args.train_data_size, args.N,
+                                       read_baseline_train, args.mode,
+                                       comp_baseline_folders)
 
     train_loader = prepare_data_loader(train_dataset, args)
     # Set validation dataset and dataloader 
     read_baseline_val = True if args.read_baseline == 2 else False
-    val_dataset = create_dataset(device, args.val_data_size, args.N,
-                                 read_baseline_val, args.mode,
-                                 comp_baseline_folders)
+    if args.K > 1:
+        val_dataset = create_dataset2(device, args.val_data_size, args.N,
+                                     read_baseline_val, args.mode,
+                                     comp_baseline_folders, args.K)
+    else:
+        val_dataset = create_dataset(device, args.val_data_size, args.N,
+                                     read_baseline_val, args.mode,
+                                     comp_baseline_folders)
     val_loader = prepare_data_loader(val_dataset, args)
     # Initialize trainer
     trainer = Trainer(model=model, 
@@ -419,6 +473,8 @@ if __name__ == "__main__":
 
     parser.add_argument('--N', type=int, default=10, metavar='N',
             help='size of vector in the dataset')
+    parser.add_argument('--K', type=int, default=1, metavar='N',
+            help='Number of signals to reconstruct from')
     parser.add_argument('--batch_size', type=int, default=1, metavar='N',
             help='batch size')
     parser.add_argument('--wandb_proj_name', type=str, default='GaussianBispectrumInversion', metavar='N',
@@ -446,8 +502,6 @@ if __name__ == "__main__":
                     '\'circular_shifts\': shift the signal circularly for every bbatch') 
     parser.add_argument('--suffix', type=str, default='',
             help='suffix to add to the name of the cnn yml file')  
-    parser.add_argument('--config_mode', type=int, default=0, 
-            help='0 for hparams, 2 for hparams2, 3 for hparams3') 
     parser.add_argument('--comp_test_name', type=str, default='',
             help='test name') 
     parser.add_argument('--comp_test_name_m', type=str, default='',
