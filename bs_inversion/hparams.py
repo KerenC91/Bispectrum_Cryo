@@ -39,7 +39,7 @@ hparams = HParams(
     debug_scheduler = "Manual",
     debug_read_baseline = 2,
     debug_comp_test_name_m = 'test_1_sample_len_5',
-    debug_K = 1,
+    debug_K = 2,
     #####################################
     # Training config
     #####################################
@@ -66,28 +66,41 @@ hparams = HParams(
     # Manual:
     manual_lr_f = 0.1,    
     manual_epochs_lr_change = [2000, 3000, 4000, 5000, 6000],
-    # ReduceLROnPlateau    
+        
+    # ReduceLROnPlateau 
+    reduce_lr_mode='min',
     reduce_lr_factor = 0.1,
     reduce_lr_threshold = 1e-3,
     reduce_lr_patience = 10,
     reduce_lr_cooldown = 0,
 
-    # StepLR
-    step_lr_step_size = 1000,
+    # StepLR - every step_size epochs decrease by lr gamma factor
+    step_lr_step_size = 5, 
     step_lr_gamma = 0.01,
     
-    # OneCycleLR
-    cyc_lr_max_lr = 0.0015091109872566496,# taken from trial 152
-    cyc_lr_pct_start = 0.5622271055325254,
+    # OneCycleLR - perform one cycle of learning. 
+    # epochs and steps per epochs are defined in the code
+    cyc_lr_max_lr = 1e-2
+    cyc_lr_pct_start = 0.562,
     cyc_lr_anneal_strategy = 'cos',
     cyc_lr_three_pahse= True,
+	#"cyc_lr_epochs": num_epochs,
+	#"cyc_lr_steps_per_epoch": len(train_loader),
     
-    # CosineAnnealingLR
-    cos_ann_lr_T_max = 1000,
+    # CosineAnnealingLR - used as:
+    # cos_ann_lr_T_max = int(num_epochs * len(train_loader) / cos_ann_lr_T_max_f)
+    # performs (cos_ann_lr_T_max_f / 2) cosine periods
+    cos_ann_lr_T_max_f = 3,
     
     # CyclicLR
+    # cyclic_lr_step_size_up = int(num_epochs * len(train_loader) / 2 / cyclic_lr_step_size_up_f)
+    # Performs cyclic_lr_step_size_up_f traingle periods
     cyclic_lr_base_lr=1e-6, 
     cyclic_lr_max_lr=1e-2,
+    cyclic_lr_mode="triangular",
+    cyclic_lr_step_size_up_f=3,
+    cyclic_lr_gamma=1,
+    
     ##########################
     # optimizer
     ##########################

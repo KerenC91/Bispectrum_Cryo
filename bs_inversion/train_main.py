@@ -331,7 +331,7 @@ def set_optimizer(args, model):
     return optimizer
 
 
-def set_scheduler(scheduler_name, optimizer, epochs):
+def set_scheduler(scheduler_name, optimizer, epochs, len_trainloader):
     scheduler = None
     if scheduler_name != 'None':
         if scheduler_name == 'ReduceLROnPlateau':
@@ -351,7 +351,7 @@ def set_scheduler(scheduler_name, optimizer, epochs):
             scheduler = optim.lr_scheduler.OneCycleLR(
                 optimizer=optimizer,
                 max_lr=hparams.cyc_lr_max_lr,
-                steps_per_epoch=1,
+                steps_per_epoch=len_trainloader,
                 epochs=epochs,
                 pct_start=hparams.cyc_lr_pct_start,
                 anneal_strategy=hparams.cyc_lr_anneal_strategy)#,
@@ -359,12 +359,16 @@ def set_scheduler(scheduler_name, optimizer, epochs):
         elif scheduler_name == 'CosineAnnealingLR':
             scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 optimizer=optimizer,
-                T_max=hparams.cos_ann_lr_T_max) 
+                T_max=epochs * len_trainloader * hparams.cos_ann_lr_T_max_f) 
         elif scheduler_name == 'CyclicLR':        
             scheduler = optim.lr_scheduler.CyclicLR(
                 optimizer=optimizer,
+                mode=hparams.cyclic_lr_mode,
                 base_lr=hparams.cyclic_lr_base_lr, 
-                max_lr=hparams.cyclic_lr_max_lr) 
+
+                max_lr=hparams.cyclic_lr_max_lr,
+                step_size_up=int(epochs * len_trainloader / 2 / hparams.cyclic_lr_step_size_up_f),
+                gamma=hparams.cyclic_lr_gamma) 
 
         return scheduler
     
@@ -400,7 +404,6 @@ def main(args):
     # Initialize model and optimizer
     model = get_model(device, args)
     optimizer = set_optimizer(args, model)
-    scheduler = set_scheduler(args.scheduler, optimizer, args.epochs)
     # print and save model
     if args.log_level >= 2:
     	print_model_summary(args, model)
@@ -428,6 +431,9 @@ def main(args):
                                      read_baseline_val, args.mode,
                                      comp_baseline_folders)
     val_loader = prepare_data_loader(val_dataset, args)
+    
+    scheduler = set_scheduler(args.scheduler, optimizer, args.epochs, len(train_loader))
+
     # Initialize trainer
     trainer = Trainer(model=model, 
                       train_loader=train_loader, 
