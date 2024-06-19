@@ -407,9 +407,23 @@ class Trainer:
             self.optimizer.step()
             # update avg loss 
             total_loss += loss.item()
+            # scheduler step after batch
+            if self.scheduler_name != 'None':
+                if self.scheduler_name in ['OneCycleLR', 'CosineAnnealingLR', 'CyclicLR']:
+                    self.scheduler.step()
             
         avg_loss = total_loss / len(self.train_loader)
         
+        # scheduler step after epoch
+        if self.scheduler_name != 'None':
+            if self.scheduler_name == 'Manual':
+                if self.epoch in hparams.manual_epochs_lr_change:
+                    self.optimizer.param_groups[0]['lr'] *= hparams.manual_lr_f 
+            elif self.scheduler_name == 'StepLR':
+                self.scheduler.step()
+            elif self.scheduler_name == 'ReduceLROnPlateau':
+                self.scheduler.step(avg_loss)
+                
         return avg_loss
 
     def _run_epoch_train_losses_all(self):   
@@ -434,11 +448,25 @@ class Trainer:
             total_loss += loss.item()
             total_mse_loss += mse_loss.item()
             total_mse_norm_loss += rel_mse_loss.item()
-            
+            # scheduler step after batch
+            if self.scheduler_name != 'None':
+                if self.scheduler_name in ['OneCycleLR', 'CosineAnnealingLR', 'CyclicLR']:
+                    self.scheduler.step()
+        
         avg_loss = total_loss / len(self.train_loader)
         avg_mse_loss = total_mse_loss / len(self.train_loader) 
         avg_mse_norm_loss = total_mse_norm_loss / len(self.train_loader) 
 
+        # scheduler step after epoch
+        if self.scheduler_name != 'None':
+            if self.scheduler_name == 'Manual':
+                if self.epoch in hparams.manual_epochs_lr_change:
+                    self.optimizer.param_groups[0]['lr'] *= hparams.manual_lr_f 
+            elif self.scheduler_name == 'StepLR':
+                self.scheduler.step()
+            elif self.scheduler_name == 'ReduceLROnPlateau':
+                self.scheduler.step(avg_loss)
+                
         return avg_loss, avg_mse_loss, avg_mse_norm_loss        
 
     def _run_epoch_validate_losses_all(self):   
@@ -492,7 +520,7 @@ class Trainer:
             avg_loss = self._run_epoch_train_losses_all()
         else:
             avg_loss = self._run_epoch_train()
-        
+            
         return avg_loss
     
     # one epoch of validation           

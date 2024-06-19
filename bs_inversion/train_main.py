@@ -354,8 +354,8 @@ def set_scheduler(scheduler_name, optimizer, epochs):
                 steps_per_epoch=1,
                 epochs=epochs,
                 pct_start=hparams.cyc_lr_pct_start,
-                anneal_strategy=hparams.cyc_lr_anneal_strategy,
-                three_pahse=hparams.cyc_lr_three_pahse)  
+                anneal_strategy=hparams.cyc_lr_anneal_strategy)#,
+                #three_pahse=hparams.cyc_lr_three_pahse)  
         elif scheduler_name == 'CosineAnnealingLR':
             scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 optimizer=optimizer,
@@ -365,6 +365,7 @@ def set_scheduler(scheduler_name, optimizer, epochs):
                 optimizer=optimizer,
                 base_lr=hparams.cyclic_lr_base_lr, 
                 max_lr=hparams.cyclic_lr_max_lr) 
+
         return scheduler
     
 
