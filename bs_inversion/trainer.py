@@ -588,16 +588,8 @@ class Trainer:
                 train_loss, train_mse_loss, train_rel_mse_loss = train_loss
                 val_loss, val_mse_loss, val_rel_mse_loss = val_loss
             # update lr
-            
-            if self.scheduler_name != 'None':
-                last_lr = self.optimizer.param_groups[0]['lr']
-                if self.scheduler_name == 'Manual':
-                    if self.epoch in hparams.manual_epochs_lr_change:
-                        self.optimizer.param_groups[0]['lr'] *= hparams.manual_lr_f 
-                elif self.scheduler_name == 'ReduceLROnPlateau':
-                    self.scheduler.step(train_loss)
-                elif self.scheduler_name in ['StepLR', 'OneCycleLR', 'CosineAnnealingLR']:
-                    self.scheduler.step()
+            last_lr = self.optimizer.param_groups[0]['lr']
+
             # log loss with wandb
             if self.wandb_flag and self.epoch % self.save_every == 0:
                 wandb.log({"train_loss": train_loss})
