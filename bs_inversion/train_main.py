@@ -96,7 +96,7 @@ def read_dataset_from_baseline(comp_baseline_folders, data_size, K, N):
 
 def create_dataset(device, data_size, K, N, read_baseline, mode, 
                    comp_baseline_folders):
-	device='cpu'
+    device='cpu'
     bs_calc = BispectrumCalculator(K, N, device).to(device)
     print(f'read_baseline={read_baseline}, mode={mode}')
     if read_baseline: # in val dataset

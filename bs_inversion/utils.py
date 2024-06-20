@@ -89,7 +89,7 @@ class BispectrumCalculator(nn.Module):
     def _create_data(self, target):
         # Create data
         target = target.clone()
-        bs, ps, f = self.calculator(target)
+        bs = self.calculator(target)
         bs_real = bs.real.float()
         bs_imag = bs.imag.float()
         source = torch.stack([bs_real, bs_imag], dim=0)
