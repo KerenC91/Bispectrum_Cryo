@@ -61,8 +61,8 @@ def set_read_func(folder_matlab):
         f = read_org
     return f
 
-def read_dataset_from_baseline(comp_baseline_folders, data_size, N):
-    target = torch.zeros(data_size, 1, N)
+def read_dataset_from_baseline(comp_baseline_folders, data_size, K, N):
+    target = torch.zeros(data_size, K, N)
 
     _, folder_matlab, _ = comp_baseline_folders
     data_size = min(data_size, len(os.listdir(folder_matlab)))
@@ -76,39 +76,39 @@ def read_dataset_from_baseline(comp_baseline_folders, data_size, N):
     
     return target
    
-def read_dataset_from_baseline2(comp_baseline_folders, data_size, N, K=2):
-    new_data_size = int(data_size / K)
-    target = torch.zeros(new_data_size, 1, K * N)
+# def read_dataset_from_baseline2(comp_baseline_folders, data_size, N, K=2):
+#     new_data_size = int(data_size / K)
+#     target = torch.zeros(new_data_size, 1, K * N)
 
-    _, folder_matlab, _ = comp_baseline_folders
-    data_size = min(new_data_size, int(len(os.listdir(folder_matlab)) / K))
+#     _, folder_matlab, _ = comp_baseline_folders
+#     data_size = min(new_data_size, int(len(os.listdir(folder_matlab)) / K))
 
-    for i in range(int(data_size / K)):
-        for j in range(K):
-            folder = os.path.join(folder_matlab, f'sample{i+j}')
-            read_func = set_read_func(folder_matlab)
+#     for i in range(int(data_size / K)):
+#         for j in range(K):
+#             folder = os.path.join(folder_matlab, f'sample{i+j}')
+#             read_func = set_read_func(folder_matlab)
             
-            target[i,:,j*N:j*N+N] = read_func(folder)   
+#             target[i,:,j*N:j*N+N] = read_func(folder)   
     
-    return target 
+#     return target 
 
-def create_dataset(device, data_size, N, read_baseline, mode, 
+def create_dataset(device, data_size, K, N, read_baseline, mode, 
                    comp_baseline_folders):
-    bs_calc = BispectrumCalculator(N, device).to(device)
+    bs_calc = BispectrumCalculator(K, N, device).to(device)
     print(f'read_baseline={read_baseline}, mode={mode}')
     if read_baseline: # in val dataset
-        target = read_dataset_from_baseline(comp_baseline_folders, data_size, N)
+        target = read_dataset_from_baseline(comp_baseline_folders, data_size, K, N)
     else:
         if mode[0] == 'opt':
             # Create random dataset
-            target = torch.randn(data_size, 1, N)
+            target = torch.randn(data_size, K, N)
         elif mode[0] == 'rand':
             # Initialize dataset to zeros and create data on the fly 
-            target = torch.zeros(data_size, 1, N)
+            target = torch.zeros(data_size, K, N)
     target.to(device)
     source, target = bs_calc(target)
     if mode[0] == 'opt' and mode[1] == 'shift' and not read_baseline:
-            target, shifts = rand_shift_signal(target, N, data_size)
+            target, shifts = rand_shift_signal(target, K, N, data_size)
     dataset = UnitVecDataset(source, target)
 
     return dataset
@@ -211,11 +211,12 @@ def get_model(device, args):
     hparams.pre_conv_channels[-1] = hparams.last_ch
     channels[-1] = hparams.last_ch
     cnt, k, s = hparams.reduce_height
-    reduce_height = update_reduce_height_cnt(k, s, args.N * args.K)
+    reduce_height = update_reduce_height_cnt(k, s, args.N)
     activation = set_activation(hparams.activation)
     model = CNNBS(
         device=device,
-        input_len=args.N * args.K,
+        input_len=args.N,
+        signals_count = args.K,
         n_heads=args.n_heads,
         channels=channels,
         b_maxout = args.maxout,
@@ -410,26 +411,26 @@ def main(args):
 
     # Set train dataset and dataloader
     read_baseline_train = True if args.read_baseline == 1 else False
-    if args.K > 1:
-        train_dataset = create_dataset2(device, args.train_data_size, args.N,
-                                       read_baseline_train, args.mode,
-                                       comp_baseline_folders, args.K)   
-    else:#1
-        train_dataset = create_dataset(device, args.train_data_size, args.N,
-                                       read_baseline_train, args.mode,
-                                       comp_baseline_folders)
+    # if args.K > 1:
+    #     train_dataset = create_dataset2(device, args.train_data_size, args.N,
+    #                                    read_baseline_train, args.mode,
+    #                                    comp_baseline_folders, args.K)   
+    # else:#1
+    train_dataset = create_dataset(device, args.train_data_size, args.K, args.N,
+                                   read_baseline_train, args.mode,
+                                   comp_baseline_folders)
 
     train_loader = prepare_data_loader(train_dataset, args)
     # Set validation dataset and dataloader 
     read_baseline_val = True if args.read_baseline == 2 else False
-    if args.K > 1:
-        val_dataset = create_dataset2(device, args.val_data_size, args.N,
-                                     read_baseline_val, args.mode,
-                                     comp_baseline_folders, args.K)
-    else:
-        val_dataset = create_dataset(device, args.val_data_size, args.N,
-                                     read_baseline_val, args.mode,
-                                     comp_baseline_folders)
+    # if args.K > 1:
+    #     val_dataset = create_dataset2(device, args.val_data_size, args.N,
+    #                                  read_baseline_val, args.mode,
+    #                                  comp_baseline_folders, args.K)
+    # else:
+    val_dataset = create_dataset(device, args.val_data_size, args.K, args.N,
+                                 read_baseline_val, args.mode,
+                                 comp_baseline_folders)
     val_loader = prepare_data_loader(val_dataset, args)
     
     scheduler = set_scheduler(args.scheduler, optimizer, args.epochs, len(train_loader))

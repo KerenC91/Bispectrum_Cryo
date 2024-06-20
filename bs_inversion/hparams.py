@@ -18,7 +18,7 @@ hparams = HParams(
     #####################################
     # debug parameters
     #####################################
-    DEBUG = True,
+    DEBUG = False,
     debug_model = 3,
     debug_N = 5,
     debug_last_ch = 256,# 8 for 1, 2,
@@ -36,10 +36,10 @@ hparams = HParams(
     debug_channels_model1 = [256, 8],
     debug_channels_model2 = [256, 64],
     debug_channels_model3 = [256, 8], # [256, debug_last_ch]
-    debug_scheduler = "Manual",
+    debug_scheduler = "StepLR",
     debug_read_baseline = 2,
     debug_comp_test_name_m = 'test_1_sample_len_5',
-    debug_K = 2,
+    debug_K = 1,
     #####################################
     # Training config
     #####################################
@@ -60,6 +60,7 @@ hparams = HParams(
     f3=0.,#_loss_freq
     f4=0.,#loss_weighted_phase
     f5=0.,#_loss_l1
+    loss_method="sum", # {"average", "sum"}
     ##########################
     # dynamic lr (scheduler)
     ##########################
@@ -80,7 +81,7 @@ hparams = HParams(
     
     # OneCycleLR - perform one cycle of learning. 
     # epochs and steps per epochs are defined in the code
-    cyc_lr_max_lr = 1e-2
+    cyc_lr_max_lr = 1e-2,
     cyc_lr_pct_start = 0.562,
     cyc_lr_anneal_strategy = 'cos',
     cyc_lr_three_pahse= True,

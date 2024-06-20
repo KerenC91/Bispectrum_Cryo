@@ -57,7 +57,7 @@ class Trainer:
             self.loss_f = self._loss_all
         else:
             self.loss_f = self._loss
-        self.bs_calc = BispectrumCalculator(self.target_len, self.device).to(self.device)
+        self.bs_calc = BispectrumCalculator(self.signals_count, self.target_len, self.device).to(self.device)
         self.aligner = BatchAligneToReference(self.device).to(self.device)
         self.folder_test, self.folder_matlab, self.folder_python = \
                         comp_baseline_folders
@@ -86,28 +86,11 @@ class Trainer:
         return total_loss
 
     def _loss_all(self, pred, target):
-        if self.signals_count > 1:
-            preds = torch.zeros(self.signals_count, self.batch_size, 1, self.target_len)
-            targets = torch.zeros(self.signals_count, self.batch_size, 1, self.target_len)
-            bs_preds = torch.zeros(self.signals_count, self.batch_size, 2, self.target_len, self.target_len)
-            bs_targets = torch.zeros(self.signals_count, self.batch_size, 2, self.target_len, self.target_len)
-
-            # maybe add rotation test          
-            for j in range(self.signals_count):
-                preds[j] = pred[:, :,j*self.target_len:j*self.target_len+self.target_len]
-                bs_preds[j], preds[j] = self.bs_calc(preds[j])
-                
-                targets[j] = target[:, :,j*self.target_len:j*self.target_len+self.target_len]
-                bs_targets[j], targets[j] = self.bs_calc(targets[j])
-                
-            bs_pred = torch.mean(bs_preds, dim=0)
-            bs_target = torch.mean(bs_targets, dim=0)
-        else:
-            bs_pred, pred = self.bs_calc(pred)
-            bs_target, target = self.bs_calc(target)            
+        bs_pred, pred = self.bs_calc(pred, hparams.loss_method)
+        bs_target, target = self.bs_calc(target, hparams.loss_method)            
         total_loss = 0.
         if hparams.f1 != 0:
-            loss_sc = self._loss_sc(bs_pred, bs_target)
+            loss_sc = self._loss_sc(bs_pred, bs_target, hparams.loss_method)
             total_loss += hparams.f1 * loss_sc
         if hparams.f2 != 0:
             loss_log_sc = self._loss_log_sc(bs_pred, bs_target) 
@@ -119,12 +102,12 @@ class Trainer:
             loss_weighted_phase = self._loss_weighted_phase(bs_pred, bs_target)
             total_loss += hparams.f4 * loss_weighted_phase
         if hparams.f5 != 0:
-            loss_l1 = self._loss_l1(pred, target)
+            loss_l1 = self._loss_l1(pred, target, hparams.loss_method)
             total_loss += hparams.f5 * loss_l1
 
         loss = total_loss, \
-                self._loss_MSE(pred, target), \
-                self._loss_rel_MSE(pred, target)
+                self._loss_MSE(pred, target, hparams.loss_method), \
+                self._loss_rel_MSE(pred, target, hparams.loss_method)
 
         return loss
 
@@ -135,7 +118,7 @@ class Trainer:
         
         return params
     
-    def _loss_sc(self, bs_pred, bs_gt):
+    def _loss_sc(self, bs_pred, bs_gt, method="average"):
         """
         
 
@@ -152,10 +135,14 @@ class Trainer:
             || BS(rec_s) - BS(s) ||_F / || BS(s) ||_F.
 
         """
-        # Get magnitudes
-        #bs_pred_mag = torch.abs(bs_pred)
-        #bs_gt_mag = torch.abs(bs_gt)
-        return torch.norm(bs_pred - bs_gt) / torch.norm(bs_gt)
+        if method == "sum":
+            squared_diff = (bs_pred - bs_gt)**2
+            squared_gt = bs_gt**2
+            loss = torch.mean(torch.sqrt(torch.sum(squared_diff, dim=(-1, -2, -3))) / torch.sqrt(torch.sum(squared_gt, dim=(-1, -2, -3))), dim=(0,1))
+        else:
+            loss = torch.norm(bs_pred - bs_gt) / torch.norm(bs_gt)
+
+        return loss
     # target - ground truth image, source - Bispectrum of ground truth image
     # might be multiple targets and sources (batch size > 1)
 
@@ -239,7 +226,7 @@ class Trainer:
         # target - ground truth image, source - Bispectrum of ground truth image
         # might be multiple targets and sources (batch size > 1)
 
-    def _loss_rel_MSE(self, pred, target):
+    def _loss_rel_MSE(self, pred, target, method="average"):
         """
         
 
@@ -256,14 +243,18 @@ class Trainer:
             || s - rec_s ||_F / || s ||_F.
 
         """
+        squared_diff = (pred - target)**2
+        squared_gt = target**2
+        loss = torch.mean(torch.sum(squared_diff, dim=(-1)) /
+                          torch.sum(squared_gt, dim=(-1)), dim=(0,1))
+                          
+        original_loss = torch.mean(
+            torch.norm(pred - target, dim=(-1, -2))**2 / \
+            torch.norm(target, dim=(-1, -2))**2)
+                
+        return loss
 
-        return torch.mean(
-            torch.norm(target - pred, dim=(-1, -2)) / 
-            torch.norm(target, dim=(-1, -2)))
-        # target - ground truth image, source - Bispectrum of ground truth image
-        # might be multiple targets and sources (batch size > 1)
-
-    def _loss_l1(self, pred, target):
+    def _loss_l1(self, pred, target, method="average"):
         """
         
 
@@ -280,13 +271,18 @@ class Trainer:
         || s - rec_s ||_1 / len(s)
 
         """
-        loss = torch.nn.L1Loss()
-        return loss(pred, target)
+        diff = torch.abs(pred - target)
+        loss = torch.mean(torch.sum(diff, dim=-1))
+                          
+        loss_method = torch.nn.L1Loss()
+        original_loss = loss_method(pred, target)
+        #No change nedded, should be the same...
+        return loss
     
         # target - ground truth image, source - Bispectrum of ground truth image
         # might be multiple targets and sources (batch size > 1)
         
-    def _loss_MSE(self, pred, target):
+    def _loss_MSE(self, pred, target, method="average"):
         """
         
 
@@ -303,8 +299,14 @@ class Trainer:
         || s - rec_s ||_1 / len(s)
 
         """
-        loss = torch.nn.MSELoss()
-        return loss(pred, target)
+        #loss = torch.sum(torch.mean(pred - target, dim=1)**2) / torch.numel(torch.mean(pred - target, dim=1))
+        squared_diff = (pred - target)**2
+        loss = torch.mean(torch.sum(squared_diff, dim=-1))
+        
+        loss_method = torch.nn.MSELoss()
+        original_loss = loss_method(pred, target)
+        #No change nedded, should be the same...
+        return loss
         
     def _run_batch(self, source, target):
         # Move data to device
@@ -331,17 +333,8 @@ class Trainer:
             target = circulant(torch.roll(y, -1))
             target = target.unsqueeze(1)
         else:
-            target = torch.randn(self.batch_size, 1, self.target_len * self.signals_count)
-        if self.signals_count > 1:
-            ch = 2
-            source = torch.zeros(self.batch_size, ch, self.target_len, self.target_len).to(self.device)
-    
-            for j in range(self.signals_count):
-                s, _ = self.bs_calc(target[:, :, j*self.target_len:j*self.target_len+self.target_len])
-                source += s
-            source /= self.signals_count
-        else:
-            source, target = self.bs_calc(target)
+            target = torch.randn(self.batch_size, self.signals_count, self.target_len)
+        source, target = self.bs_calc(target)
 
         if self.mode[1] == 'shift':
             target, shifts = rand_shift_signal(target, 
@@ -607,8 +600,8 @@ class Trainer:
                     self.scheduler.step()
             # log loss with wandb
             if self.wandb_flag and self.epoch % self.save_every == 0:
-                wandb.log({"train_loss_l1": train_loss})
-                wandb.log({"val_loss_l1": val_loss})
+                wandb.log({"train_loss": train_loss})
+                wandb.log({"val_loss": val_loss})
                 wandb.log({"lr": self.optimizer.param_groups[0]['lr']})
                 if self.loss_mode == 'all':
                     wandb.log({"train mse": train_mse_loss})
