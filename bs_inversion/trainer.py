@@ -606,7 +606,7 @@ class Trainer:
                 val_loss, val_mse_loss, val_rel_mse_loss = val_loss
        
             # update lr            
-
+            
             last_lr = self.optimizer.param_groups[0]['lr']
 
 
@@ -625,8 +625,8 @@ class Trainer:
             if self.device == 0: 
                 # log loss with wandb
                 if self.wandb_flag and self.epoch % self.save_every == 0:
-                    wandb.log({"train_loss_l1": train_loss.item()})
-                    wandb.log({"val_loss_l1": val_loss.item()})
+                    wandb.log({"train_loss": train_loss.item()})
+                    wandb.log({"val_loss": val_loss.item()})
                     wandb.log({"lr": self.optimizer.param_groups[0]['lr']})
                     if self.loss_mode == 'all':
                         wandb.log({"train mse": train_mse_loss})
