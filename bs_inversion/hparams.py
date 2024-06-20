@@ -20,24 +20,26 @@ hparams = HParams(
     #####################################
     DEBUG = False,
     debug_model = 3,
-    debug_N = 100,
+    debug_N = 5,
     debug_last_ch = 256,# 8 for 1, 2,
     debug_pre_conv_channels = [8, 32, 256], # [8, 32, 64, debug_last_ch]
     debug_pre_residuals = 1,
     debug_up_residuals = 1,
     debug_post_residuals = 1,
     debug_n_heads = 1,
-    debug_mode = 'opt',
+    debug_mode = ['opt', 'shift'],
     debug_batch_size = 5,
     debug_loss_mode = 'all',
-    debug_train_data_size = 10,
+    debug_train_data_size = 20,
     debug_val_data_size = 1,
     debug_epochs = 1,
     debug_channels_model1 = [256, 8],
     debug_channels_model2 = [256, 64],
     debug_channels_model3 = [256, 8], # [256, debug_last_ch]
-
-
+    debug_scheduler = "StepLR",
+    debug_read_baseline = 2,
+    debug_comp_test_name_m = 'test_1_sample_len_5',
+    debug_K = 1,
     #####################################
     # Training config
     #####################################
@@ -58,33 +60,48 @@ hparams = HParams(
     f3=0.,#_loss_freq
     f4=0.,#loss_weighted_phase
     f5=0.,#_loss_l1
+    loss_method="sum", # {"average", "sum"}
     ##########################
     # dynamic lr (scheduler)
     ##########################
     # Manual:
     manual_lr_f = 0.1,    
     manual_epochs_lr_change = [2000, 3000, 4000, 5000, 6000],
-    # ReduceLROnPlateau    
+        
+    # ReduceLROnPlateau 
+    reduce_lr_mode='min',
     reduce_lr_factor = 0.1,
     reduce_lr_threshold = 1e-3,
     reduce_lr_patience = 10,
     reduce_lr_cooldown = 0,
 
-    # StepLR
-    step_lr_step_size = 1000,
+    # StepLR - every step_size epochs decrease by lr gamma factor
+    step_lr_step_size = 5, 
     step_lr_gamma = 0.01,
     
-    # OneCycleLR
-    cyc_lr_max_lr = 0.0015091109872566496,# taken from trial 152
-    cyc_lr_pct_start = 0.5622271055325254,
+    # OneCycleLR - perform one cycle of learning. 
+    # epochs and steps per epochs are defined in the code
+    cyc_lr_max_lr = 1e-2,
+    cyc_lr_pct_start = 0.562,
     cyc_lr_anneal_strategy = 'cos',
+    cyc_lr_three_pahse= True,
+	#"cyc_lr_epochs": num_epochs,
+	#"cyc_lr_steps_per_epoch": len(train_loader),
     
-    # CosineAnnealingLR
-    cos_ann_lr_T_max = 1000,
+    # CosineAnnealingLR - used as:
+    # cos_ann_lr_T_max = int(num_epochs * len(train_loader) / cos_ann_lr_T_max_f)
+    # performs (cos_ann_lr_T_max_f / 2) cosine periods
+    cos_ann_lr_T_max_f = 3,
     
     # CyclicLR
+    # cyclic_lr_step_size_up = int(num_epochs * len(train_loader) / 2 / cyclic_lr_step_size_up_f)
+    # Performs cyclic_lr_step_size_up_f traingle periods
     cyclic_lr_base_lr=1e-6, 
     cyclic_lr_max_lr=1e-2,
+    cyclic_lr_mode="triangular",
+    cyclic_lr_step_size_up_f=3,
+    cyclic_lr_gamma=1,
+    
     ##########################
     # optimizer
     ##########################
@@ -133,7 +150,6 @@ hparams = HParams(
     loss_lim = 1e-6,
     # comparison with baseline
     comp_root = '/scratch/home/kerencohen2/Git/Bispectrum_Cryo/bs_inversion/baseline_comp',
-    comp_test_name = 'test_1_sample',
     comp_n_runs_per_test = 10,
 
     matlab_x_org_file = 'data_from_matlab/sample2/x_true.csv',

@@ -37,6 +37,7 @@ class Trainer:
         self.train_data_size = args.train_data_size
         self.val_data_size = args.val_data_size
         self.target_len = args.N
+        self.signals_count = args.K
         self.save_every = args.save_every
         self.model = model.to(device)
         self.model = DDP(self.model, device_ids=[self.device], 
@@ -59,7 +60,7 @@ class Trainer:
             self.loss_f = self._loss_all
         else:
             self.loss_f = self._loss
-        self.bs_calc = BispectrumCalculator(self.target_len, self.device).to(self.device)
+        self.bs_calc = BispectrumCalculator(self.signals_count, self.target_len, self.device).to(self.device)
         self.aligner = BatchAligneToReference(self.device).to(self.device)
         self.folder_test, self.folder_matlab, self.folder_python = \
                         comp_baseline_folders
@@ -89,11 +90,11 @@ class Trainer:
         return total_loss
 
     def _loss_all(self, pred, target):
-        bs_pred, pred = self.bs_calc(pred)
-        bs_target, target = self.bs_calc(target)
+        bs_pred, pred = self.bs_calc(pred, hparams.loss_method)
+        bs_target, target = self.bs_calc(target, hparams.loss_method)            
         total_loss = 0.
         if hparams.f1 != 0:
-            loss_sc = self._loss_sc(bs_pred, bs_target)
+            loss_sc = self._loss_sc(bs_pred, bs_target, hparams.loss_method)
             total_loss += hparams.f1 * loss_sc
         if hparams.f2 != 0:
             loss_log_sc = self._loss_log_sc(bs_pred, bs_target) 
@@ -105,12 +106,12 @@ class Trainer:
             loss_weighted_phase = self._loss_weighted_phase(bs_pred, bs_target)
             total_loss += hparams.f4 * loss_weighted_phase
         if hparams.f5 != 0:
-            loss_l1 = self._loss_l1(pred, target)
+            loss_l1 = self._loss_l1(pred, target, hparams.loss_method)
             total_loss += hparams.f5 * loss_l1
 
         loss = total_loss, \
-                self._loss_MSE(pred, target), \
-                self._loss_rel_MSE(pred, target)
+                self._loss_MSE(pred, target, hparams.loss_method), \
+                self._loss_rel_MSE(pred, target, hparams.loss_method)
 
         return loss
 
@@ -121,7 +122,7 @@ class Trainer:
         
         return params
     
-    def _loss_sc(self, bs_pred, bs_gt):
+    def _loss_sc(self, bs_pred, bs_gt, method="average"):
         """
         
 
@@ -138,10 +139,14 @@ class Trainer:
             || BS(rec_s) - BS(s) ||_F / || BS(s) ||_F.
 
         """
-        # Get magnitudes
-        #bs_pred_mag = torch.abs(bs_pred)
-        #bs_gt_mag = torch.abs(bs_gt)
-        return torch.norm(bs_pred - bs_gt) / torch.norm(bs_gt)
+        if method == "sum":
+            squared_diff = (bs_pred - bs_gt)**2
+            squared_gt = bs_gt**2
+            loss = torch.mean(torch.sqrt(torch.sum(squared_diff, dim=(-1, -2, -3))) / torch.sqrt(torch.sum(squared_gt, dim=(-1, -2, -3))), dim=(0,1))
+        else:
+            loss = torch.norm(bs_pred - bs_gt) / torch.norm(bs_gt)
+
+        return loss
     # target - ground truth image, source - Bispectrum of ground truth image
     # might be multiple targets and sources (batch size > 1)
 
@@ -162,10 +167,7 @@ class Trainer:
             || log(|BS(s)| + epsilon) - log(|BS(rec_s)| + epsilon) ||_1
 
         """
-        # Get magnitudes
-        bs_pred_mag = torch.abs(bs_pred)
-        bs_gt_mag = torch.abs(bs_gt)
-        return torch.norm(torch.log(bs_gt_mag + eps) - torch.log(bs_pred_mag + eps), p=1)
+        return 0
     # target - ground truth image, source - Bispectrum of ground truth image
     # might be multiple targets and sources (batch size > 1)
 
@@ -228,7 +230,7 @@ class Trainer:
         # target - ground truth image, source - Bispectrum of ground truth image
         # might be multiple targets and sources (batch size > 1)
 
-    def _loss_rel_MSE(self, pred, target):
+    def _loss_rel_MSE(self, pred, target, method="average"):
         """
         
 
@@ -245,14 +247,18 @@ class Trainer:
             || s - rec_s ||_F / || s ||_F.
 
         """
+        squared_diff = (pred - target)**2
+        squared_gt = target**2
+        loss = torch.mean(torch.sum(squared_diff, dim=(-1)) /
+                          torch.sum(squared_gt, dim=(-1)), dim=(0,1))
+                          
+        original_loss = torch.mean(
+            torch.norm(pred - target, dim=(-1, -2))**2 / \
+            torch.norm(target, dim=(-1, -2))**2)
+                
+        return loss
 
-        return torch.mean(
-            torch.norm(target - pred, dim=(-1, -2)) / 
-            torch.norm(target, dim=(-1, -2)))
-        # target - ground truth image, source - Bispectrum of ground truth image
-        # might be multiple targets and sources (batch size > 1)
-
-    def _loss_l1(self, pred, target):
+    def _loss_l1(self, pred, target, method="average"):
         """
         
 
@@ -269,13 +275,18 @@ class Trainer:
         || s - rec_s ||_1 / len(s)
 
         """
-        loss = torch.nn.L1Loss()
-        return loss(pred, target)
+        diff = torch.abs(pred - target)
+        loss = torch.mean(torch.sum(diff, dim=-1))
+                          
+        loss_method = torch.nn.L1Loss()
+        original_loss = loss_method(pred, target)
+        #No change nedded, should be the same...
+        return loss
     
         # target - ground truth image, source - Bispectrum of ground truth image
         # might be multiple targets and sources (batch size > 1)
         
-    def _loss_MSE(self, pred, target):
+    def _loss_MSE(self, pred, target, method="average"):
         """
         
 
@@ -292,8 +303,14 @@ class Trainer:
         || s - rec_s ||_1 / len(s)
 
         """
-        loss = torch.nn.MSELoss()
-        return loss(pred, target)
+        #loss = torch.sum(torch.mean(pred - target, dim=1)**2) / torch.numel(torch.mean(pred - target, dim=1))
+        squared_diff = (pred - target)**2
+        loss = torch.mean(torch.sum(squared_diff, dim=-1))
+        
+        loss_method = torch.nn.MSELoss()
+        original_loss = loss_method(pred, target)
+        #No change nedded, should be the same...
+        return loss
         
     def _run_batch(self, source, target):
         # Move data to device
@@ -320,8 +337,9 @@ class Trainer:
             target = circulant(torch.roll(y, -1))
             target = target.unsqueeze(1)
         else:
-            target = torch.randn(self.batch_size, 1, self.target_len)
+            target = torch.randn(self.batch_size, self.signals_count, self.target_len)
         source, target = self.bs_calc(target)
+
         if self.mode[1] == 'shift':
             target, shifts = rand_shift_signal(target, 
                                                 self.target_len, 
@@ -385,9 +403,23 @@ class Trainer:
             self.optimizer.step()
             # update avg loss 
             total_loss += loss
+            # scheduler step after batch
+            if self.scheduler_name != 'None':
+                if self.scheduler_name in ['OneCycleLR', 'CosineAnnealingLR', 'CyclicLR']:
+                    self.scheduler.step()
             
         avg_loss = total_loss / len(self.train_loader)
         
+        # scheduler step after epoch
+        if self.scheduler_name != 'None':
+            if self.scheduler_name == 'Manual':
+                if self.epoch in hparams.manual_epochs_lr_change:
+                    self.optimizer.param_groups[0]['lr'] *= hparams.manual_lr_f 
+            elif self.scheduler_name == 'StepLR':
+                self.scheduler.step()
+            elif self.scheduler_name == 'ReduceLROnPlateau':
+                self.scheduler.step(avg_loss)
+                
         return avg_loss
 
     def _run_epoch_train_losses_all(self):   
@@ -420,11 +452,25 @@ class Trainer:
             total_mse_loss += mse_loss.item()
             total_mse_norm_loss += rel_mse_loss.item()
             del sources, targets, loss
-            
+			# scheduler step after batch
+            if self.scheduler_name != 'None':
+                if self.scheduler_name in ['OneCycleLR', 'CosineAnnealingLR', 'CyclicLR']:
+                    self.scheduler.step()
+        
         avg_loss = total_loss / len(self.train_loader)
         avg_mse_loss = total_mse_loss / len(self.train_loader) 
         avg_mse_norm_loss = total_mse_norm_loss / len(self.train_loader) 
 
+        # scheduler step after epoch
+        if self.scheduler_name != 'None':
+            if self.scheduler_name == 'Manual':
+                if self.epoch in hparams.manual_epochs_lr_change:
+                    self.optimizer.param_groups[0]['lr'] *= hparams.manual_lr_f 
+            elif self.scheduler_name == 'StepLR':
+                self.scheduler.step()
+            elif self.scheduler_name == 'ReduceLROnPlateau':
+                self.scheduler.step(avg_loss)
+                
         return avg_loss, avg_mse_loss, avg_mse_norm_loss        
 
     def _run_epoch_validate_losses_all(self):   
@@ -478,7 +524,7 @@ class Trainer:
             avg_loss = self._run_epoch_train_losses_all()
         else:
             avg_loss = self._run_epoch_train()
-        
+            
         return avg_loss
     
     # one epoch of validation           
@@ -560,15 +606,9 @@ class Trainer:
                 val_loss, val_mse_loss, val_rel_mse_loss = val_loss
        
             # update lr            
-            if self.scheduler_name != 'None':
-                last_lr = self.optimizer.param_groups[0]['lr']
-                if self.scheduler_name == 'Manual':
-                    if self.epoch in hparams.manual_epochs_lr_change:
-                        self.optimizer.param_groups[0]['lr'] *= hparams.manual_lr_f 
-                elif self.scheduler_name == 'ReduceLROnPlateau':
-                    self.scheduler.step(train_loss)
-                elif self.scheduler_name in ['StepLR', 'OneCycleLR', 'CosineAnnealingLR']:
-                    self.scheduler.step()
+
+            last_lr = self.optimizer.param_groups[0]['lr']
+
 
             if self.epoch % self.save_every == 0:
                 # Get loss from all processes

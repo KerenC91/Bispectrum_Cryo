@@ -76,9 +76,10 @@ def clculate_bispectrum_efficient(x):
 
 
 class BispectrumCalculator(nn.Module):
-    def __init__(self, target_len, device):
+    def __init__(self, targets_count, target_len, device):
         super().__init__()
         self.calculator = clculate_bispectrum_efficient
+        self.targets_count = targets_count
         self.target_len = target_len
         self.device = device
         self.channels = 2
@@ -88,7 +89,7 @@ class BispectrumCalculator(nn.Module):
     def _create_data(self, target):
         # Create data
         target = target.clone()
-        bs = self.calculator(target.squeeze(0))
+        bs, ps, f = self.calculator(target)
         bs_real = bs.real.float()
         bs_imag = bs.imag.float()
         source = torch.stack([bs_real, bs_imag], dim=0)
@@ -96,14 +97,46 @@ class BispectrumCalculator(nn.Module):
         return source, target 
     # target: signal 1Xtarget_len
     # source: bs     2Xtarget_lenXtarget_len
-    def forward(self, target):
+    def forward(self, target, method="average"):
         batch_size = target.shape[0]
         # Iterate over the batch dimension using indexing
-        source = torch.zeros(batch_size, self.channels, self.height, self.width).to(self.device)
-
-        for i in range(batch_size):
-            source[i], target[i] = self._create_data(target[i])
+        if method == "sum":
+            source = torch.zeros(batch_size, self.targets_count, self.channels, self.height, self.width).to(self.device)
+      
+            for i in range(batch_size):
+                for j in range(self.targets_count):
+                    source[i][j], target[i][j] = self._create_data(target[i][j])
+        else: #average
+            source = torch.zeros(batch_size, self.channels, self.height, self.width).to(self.device)
+            s = torch.zeros(self.channels, self.height, self.width).to(self.device)
+            
+            for i in range(batch_size):
+                for j in range(self.targets_count):
+                    s, target[i][j] = self._create_data(target[i][j])
+                    source[i] += s.to(self.device)
+                source[i] /= self.targets_count            
+            #add for sum loss metric
         return source, target  # Stack processed vectors
+
+
+
+class BatchAligneToReference(nn.Module):
+    def __init__(self, device):
+        super().__init__()
+        self._align = align_to_reference
+        self.device = device
+
+    def forward(self, x, xref):
+        batch_size = x.shape[0]
+        # Iterate over the batch dimension using indexing
+        x_aligned = torch.zeros_like(x).to(self.device)
+        inds = torch.zeros(batch_size).to(self.device)
+        
+        for i in range(batch_size):
+            aligned, inds[i] = \
+                self._align(x[i].squeeze(0), xref[i].squeeze(0))
+            x_aligned[i] = aligned.unsqueeze(0)
+        return x_aligned, inds  # Stack processed vectors
 
 
 
