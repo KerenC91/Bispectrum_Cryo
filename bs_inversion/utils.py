@@ -128,14 +128,15 @@ class BatchAligneToReference(nn.Module):
         
     def forward(self, x, xref):
         batch_size = x.shape[0]
+        signals_count = x.shape[1]
         # Iterate over the batch dimension using indexing
         x_aligned = torch.zeros_like(x).to(self.device)
-        inds = torch.zeros(batch_size).to(self.device)
+        inds = torch.zeros(batch_size, signals_count).to(self.device)
         
         for i in range(batch_size):
-            aligned, inds[i] = \
-                self._align(x[i].squeeze(0), xref[i].squeeze(0))
-            x_aligned[i] = aligned.unsqueeze(0)
+            for j in range(signals_count):
+                x_aligned[i][j], inds[i][j] = \
+                    self._align(x[i][j], xref[i][j])
         return x_aligned, inds  # Stack processed vectors
     
    

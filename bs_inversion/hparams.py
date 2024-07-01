@@ -18,7 +18,7 @@ hparams = HParams(
     #####################################
     # debug parameters
     #####################################
-    DEBUG = False,
+    DEBUG = True,
     debug_model = 3,
     debug_N = 5,
     debug_last_ch = 256,# 8 for 1, 2,
@@ -28,18 +28,18 @@ hparams = HParams(
     debug_post_residuals = 14,
     debug_n_heads = 1,
     debug_mode = ['rand', 'none'],
-    debug_batch_size = 1,
+    debug_batch_size = 5,
     debug_loss_mode = 'all',
     debug_train_data_size = 5,
-    debug_val_data_size = 10,
-    debug_epochs = 7500,
+    debug_val_data_size = 100,
+    debug_epochs = 1,
     debug_channels_model1 = [256, 8],
     debug_channels_model2 = [256, 64],
     debug_channels_model3 = [256, 8], # [256, debug_last_ch]
-    debug_scheduler = "StepLR",
-    debug_read_baseline = 2,
+    debug_scheduler = "OneCycleLR",
+    debug_read_baseline = 0,
     debug_comp_test_name_m = 'test_1_sample_len_5',
-    debug_K = 1,
+    debug_K = 2,
     #####################################
     # Training config
     #####################################
@@ -76,7 +76,7 @@ hparams = HParams(
     reduce_lr_cooldown = 0,
 
     # StepLR - every step_size epochs decrease by lr gamma factor
-    step_lr_step_size = 5, 
+    step_lr_step_size = 100, 
     step_lr_gamma = 0.01,
     
     # OneCycleLR - perform one cycle of learning. 
@@ -125,7 +125,7 @@ hparams = HParams(
     ##########################
     # CNN params
     ##########################
-    last_ch = 256, # for all models: 8, for model3: 64
+    last_ch = 256, # last ch of pre conv. for all models: 8, for model3: 256
     dilation_mid = 1,
     #channels = [256, 256], # for model1: [256, 8], for model2: [256, 64]  
                         # layer_channels list of values on each of heads

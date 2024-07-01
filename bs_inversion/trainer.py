@@ -62,6 +62,7 @@ class Trainer:
         self.folder_test, self.folder_matlab, self.folder_python = \
                         comp_baseline_folders
         self.is_training = True
+        self.loss_method = args.loss_method
     
     def _loss(self, pred, target):
         bs_pred, _ = self.bs_calc(pred)
@@ -86,11 +87,11 @@ class Trainer:
         return total_loss
 
     def _loss_all(self, pred, target):
-        bs_pred, pred = self.bs_calc(pred, hparams.loss_method)
-        bs_target, target = self.bs_calc(target, hparams.loss_method)            
+        bs_pred, pred = self.bs_calc(pred, self.loss_method)
+        bs_target, target = self.bs_calc(target, self.loss_method)            
         total_loss = 0.
         if hparams.f1 != 0:
-            loss_sc = self._loss_sc(bs_pred, bs_target, hparams.loss_method)
+            loss_sc = self._loss_sc(bs_pred, bs_target, self.loss_method)
             total_loss += hparams.f1 * loss_sc
         if hparams.f2 != 0:
             loss_log_sc = self._loss_log_sc(bs_pred, bs_target) 
@@ -102,12 +103,12 @@ class Trainer:
             loss_weighted_phase = self._loss_weighted_phase(bs_pred, bs_target)
             total_loss += hparams.f4 * loss_weighted_phase
         if hparams.f5 != 0:
-            loss_l1 = self._loss_l1(pred, target, hparams.loss_method)
+            loss_l1 = self._loss_l1(pred, target, self.loss_method)
             total_loss += hparams.f5 * loss_l1
 
         loss = total_loss, \
-                self._loss_MSE(pred, target, hparams.loss_method), \
-                self._loss_rel_MSE(pred, target, hparams.loss_method)
+                self._loss_MSE(pred, target, self.loss_method), \
+                self._loss_rel_MSE(pred, target, self.loss_method)
 
         return loss
 
@@ -136,9 +137,14 @@ class Trainer:
 
         """
         if method == "sum":
-            squared_diff = (bs_pred - bs_gt)**2
-            squared_gt = bs_gt**2
-            loss = torch.mean(torch.sqrt(torch.sum(squared_diff, dim=(-1, -2, -3))) / torch.sqrt(torch.sum(squared_gt, dim=(-1, -2, -3))), dim=(0,1))
+            # squared_diff = (bs_pred - bs_gt)**2
+            # squared_gt = bs_gt**2
+            # loss = torch.mean(torch.sqrt(torch.sum(squared_diff, dim=(-1, -2, -3))) / torch.sqrt(torch.sum(squared_gt, dim=(-1, -2, -3))), dim=(0,1))
+            
+            loss2 = torch.zeros(bs_pred.shape[1])
+            for k in range(bs_pred.shape[1]):
+                loss2[k] = torch.norm(bs_pred[:,k,:,:,:] - bs_gt[:,k,:,:,:] ) / torch.norm(bs_gt[:,k,:,:,:] )
+            loss = torch.mean(loss2)
         else:
             loss = torch.norm(bs_pred - bs_gt) / torch.norm(bs_gt)
 
@@ -243,16 +249,19 @@ class Trainer:
             || s - rec_s ||_F / || s ||_F.
 
         """
-        squared_diff = (pred - target)**2
-        squared_gt = target**2
-        loss = torch.mean(torch.sum(squared_diff, dim=(-1)) /
-                          torch.sum(squared_gt, dim=(-1)), dim=(0,1))
+        # squared_diff = (pred - target)**2
+        # squared_gt = target**2
+        # loss = torch.mean(torch.sum(squared_diff, dim=(-1)) /
+        #                   torch.sum(squared_gt, dim=(-1)), dim=(0,1))
                           
-        original_loss = torch.mean(
-            torch.norm(pred - target, dim=(-1, -2))**2 / \
-            torch.norm(target, dim=(-1, -2))**2)
-                
-        return loss
+        # original_loss = torch.mean(
+        #     torch.norm(pred - target, dim=(-1, -2))**2 / \
+        #     torch.norm(target, dim=(-1, -2))**2)
+        loss2 = torch.zeros(pred.shape[1])
+        for k in range(pred.shape[1]):
+            loss2[k] = torch.norm(pred[:,k,:] - target[:,k,:] )**2 / torch.norm(target[:,k,:])**2
+        loss22 = torch.mean(loss2)        
+        return loss22
 
     def _loss_l1(self, pred, target, method="average"):
         """
@@ -271,13 +280,17 @@ class Trainer:
         || s - rec_s ||_1 / len(s)
 
         """
-        diff = torch.abs(pred - target)
-        loss = torch.mean(torch.sum(diff, dim=-1))
+        # diff = torch.abs(pred - target)
+        # loss = torch.mean(torch.sum(diff, dim=-1))
                           
         loss_method = torch.nn.L1Loss()
         original_loss = loss_method(pred, target)
+        # loss2 = torch.zeros(pred.shape[1])
+        # for k in range(pred.shape[1]):
+        #     loss2[k] = loss_method(pred[:,k,:], target[:,k,:])
+        # loss22 = torch.mean(loss2)  
         #No change nedded, should be the same...
-        return loss
+        return original_loss
     
         # target - ground truth image, source - Bispectrum of ground truth image
         # might be multiple targets and sources (batch size > 1)
@@ -299,14 +312,17 @@ class Trainer:
         || s - rec_s ||_1 / len(s)
 
         """
-        #loss = torch.sum(torch.mean(pred - target, dim=1)**2) / torch.numel(torch.mean(pred - target, dim=1))
-        squared_diff = (pred - target)**2
-        loss = torch.mean(torch.sum(squared_diff, dim=-1))
+        # squared_diff = (pred - target)**2
+        # loss = torch.mean(torch.sum(squared_diff, dim=-1))
         
         loss_method = torch.nn.MSELoss()
         original_loss = loss_method(pred, target)
+        # loss2 = torch.zeros(pred.shape[1])
+        # for k in range(pred.shape[1]):
+        #     loss2[k] = loss_method(pred[:,k,:], target[:,k,:])
+        # loss22 = torch.mean(loss2)  
         #No change nedded, should be the same...
-        return loss
+        return original_loss
         
     def _run_batch(self, source, target):
         # Move data to device
@@ -361,6 +377,29 @@ class Trainer:
     def plot_output_debug(self, target, output, folder, from_matlab=None):
         if not os.path.exists(folder):
             os.makedirs(folder)
+        for k in range(self.signals_count):
+            #folder_k = f'{folder}/{k+1}'
+            fig_path = f'{folder}/x_vs_x_rec_{k+1}.png' 
+            
+            # if not os.path.exists(folder_k):
+            #     os.makedirs(folder_k)
+                
+            plt.figure()
+            plt.title(f'Comparison between original signal {k+1}'
+                      f' and its reconstructions')
+            plt.plot(target[k], label='org')
+            plt.plot(output[k], label='tested')
+            if from_matlab is not None:
+                plt.plot(from_matlab[k], label='baseline')
+            plt.ylabel('signal')
+            plt.xlabel('time')
+            #plt.legend()
+            plt.savefig(fig_path)        
+            plt.close()
+            
+    def plot_output_debug2(self, target, output, folder, from_matlab=None):
+        if not os.path.exists(folder):
+            os.makedirs(folder)
         fig_path = f'{folder}/x_vs_x_rec.png'     
       
         plt.figure()
@@ -374,7 +413,7 @@ class Trainer:
         plt.legend()
         plt.savefig(fig_path)        
         plt.close()
-   
+            
     def _save_checkpoint(self, epoch):
         ckp = self.model.state_dict()
         folder = f'./checkpoints/cnn_{self.suffix}'
@@ -550,31 +589,35 @@ class Trainer:
             self.save_python_test_data(idx.item(), output, target)
             
     def save_python_test_data(self, i, x_est, x_true):
-        folder = os.path.join(self.folder_python, f'sample{i}')
+        folder = os.path.join(self.folder_python, f'sample{i+1}')
         if not os.path.exists(folder):
             os.mkdir(folder)
             
         rel_error_X = self._loss_rel_MSE(x_est, x_true).item()
         rel_error_X_path = os.path.join(folder, 'rel_error_X.csv')
         np.savetxt(rel_error_X_path, [rel_error_X])
-        
-        x_est_path = os.path.join(folder, 'x_est.csv')
-        np.savetxt(x_est_path, 
-                   x_est.squeeze(0).squeeze(0).cpu().detach().numpy())
-        
-        x_true_path = os.path.join(folder, 'x_true.csv')
-        np.savetxt(x_true_path, 
-                   x_true.squeeze(0).squeeze(0).cpu().detach().numpy())
-        
-        #read from matlab
-        folder_m = os.path.join(self.folder_matlab, f'sample{i}')
-        file_path = os.path.join(folder_m, 'x_est.csv')
-        x_est_m = np.loadtxt(file_path, delimiter=" ")
-        #save figure
-        self.plot_output_debug(x_true.squeeze(0).squeeze(0).cpu().detach().numpy(), 
-                               x_est.squeeze(0).squeeze(0).cpu().detach().numpy(),
-                               folder,
-                               x_est_m)
+        for k in range(self.signals_count):
+            folder_k = os.path.join(folder, f'{k+1}')
+            if not os.path.exists(folder_k):
+                os.mkdir(folder_k)
+
+            x_est_path = os.path.join(folder_k, f'x_est.csv')
+            np.savetxt(x_est_path, 
+                       x_est.squeeze(0)[k].cpu().detach().numpy())
+            
+            x_true_path = os.path.join(folder_k, f'x_true.csv')
+            np.savetxt(x_true_path, 
+                       x_true.squeeze(0)[k].cpu().detach().numpy())
+            
+            #read from matlab
+            folder_m = os.path.join(self.folder_matlab, f'sample{i * self.signals_count + k}')
+            file_path = os.path.join(folder_m, 'x_est.csv')
+            x_est_m = np.loadtxt(file_path, delimiter=" ")
+            #save figure
+            self.plot_output_debug2(x_true.squeeze(0)[k].cpu().detach().numpy(), 
+                                   x_est.squeeze(0)[k].cpu().detach().numpy(),
+                                   folder_k,
+                                   x_est_m)
 
         
     def run(self):
@@ -620,8 +663,8 @@ class Trainer:
             # plot last output
             if self.epoch == self.epochs - 1:
                 folder = f'figures/cnn_{self.suffix}'
-                self.plot_output_debug(self.last_target[0].squeeze(0).detach().cpu().numpy(), 
-                                       self.last_output[0].squeeze(0).detach().cpu().numpy(),
+                self.plot_output_debug(self.last_target[0].detach().cpu().numpy(), 
+                                       self.last_output[0].detach().cpu().numpy(),
                                        folder)
                 if self.read_baseline != 0:
                     if self.read_baseline == 1: # train
@@ -642,8 +685,8 @@ class Trainer:
                         print(f'Stooped at epoch {self.epoch}, after {self.es_cnt} times\n'
                               f'last_loss={self.last_loss}, curr_los={train_loss}')
                         folder = f'figures/cnn_{self.suffix}'
-                        self.plot_output_debug(self.last_target[0].squeeze(0).detach().cpu().numpy(),
-                                               self.last_output[0].squeeze(0).detach().cpu().numpy(), 
+                        self.plot_output_debug(self.last_target[0].detach().cpu().numpy(),
+                                               self.last_output[0].detach().cpu().numpy(), 
                                                folder)
                         return
             # stop if loss has reached lower bound

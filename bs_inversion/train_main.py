@@ -62,17 +62,22 @@ def set_read_func(folder_matlab):
     return f
 
 def read_dataset_from_baseline(comp_baseline_folders, data_size, K, N):
-    target = torch.zeros(data_size, K, N)
 
     _, folder_matlab, _ = comp_baseline_folders
     data_size = min(data_size, len(os.listdir(folder_matlab)))
+    data_size_org = data_size
+    data_size = int(data_size / K)
+    target = torch.zeros(data_size, K, N)
 
+    print(f'The updated data size is {data_size_org} / {K} = {data_size}')
+    
     for i in range(data_size):
-
-        folder = os.path.join(folder_matlab, f'sample{i}')
-        read_func = set_read_func(folder_matlab)
-        
-        target[i] = read_func(folder)   
+        for j in range(K):
+            n = i * K + j
+            folder = os.path.join(folder_matlab, f'sample{n}')
+            read_func = set_read_func(folder_matlab)
+            
+            target[i][j] = read_func(folder)   
     
     return target
    
@@ -113,32 +118,32 @@ def create_dataset(device, data_size, K, N, read_baseline, mode,
 
     return dataset
 
-def create_dataset2(device, data_size, N, read_baseline, mode, 
-                   comp_baseline_folders, K=2):
-    bs_calc = BispectrumCalculator(N, device).to(device)
-    print(f'read_baseline={read_baseline}, mode={mode}')
-    if read_baseline: # in val dataset
-        target = read_dataset_from_baseline2(comp_baseline_folders, data_size, N)
-    else:
-        if mode[0] == 'opt':
-            # Create random dataset
-            target = torch.randn(int(data_size / K), 1, K * N)
-        elif mode[0] == 'rand':
-            # Initialize dataset to zeros and create data on the fly 
-            target = torch.zeros(int(data_size / K), 1, K * N)
-    target.to(device)
-    ch = 2
-    source = torch.zeros(int(data_size / K), ch, N, N).to(device)
+# def create_dataset2(device, data_size, N, read_baseline, mode, 
+#                    comp_baseline_folders, K=2):
+#     bs_calc = BispectrumCalculator(N, device).to(device)
+#     print(f'read_baseline={read_baseline}, mode={mode}')
+#     if read_baseline: # in val dataset
+#         target = read_dataset_from_baseline2(comp_baseline_folders, data_size, N)
+#     else:
+#         if mode[0] == 'opt':
+#             # Create random dataset
+#             target = torch.randn(int(data_size / K), 1, K * N)
+#         elif mode[0] == 'rand':
+#             # Initialize dataset to zeros and create data on the fly 
+#             target = torch.zeros(int(data_size / K), 1, K * N)
+#     target.to(device)
+#     ch = 2
+#     source = torch.zeros(int(data_size / K), ch, N, N).to(device)
 
-    for j in range(K):
-        s, _ = bs_calc(target[:, :, j*N:j*N+N])
-        source += s
-    source /= K
-    if mode[0] == 'opt' and mode[1] == 'shift' and not read_baseline:
-            target, shifts = rand_shift_signal(target, N, data_size)
-    dataset = UnitVecDataset(source, target)
+#     for j in range(K):
+#         s, _ = bs_calc(target[:, :, j*N:j*N+N])
+#         source += s
+#     source /= K
+#     if mode[0] == 'opt' and mode[1] == 'shift' and not read_baseline:
+#             target, shifts = rand_shift_signal(target, N, data_size)
+#     dataset = UnitVecDataset(source, target)
 
-    return dataset
+#     return dataset
 
 
 def set_activation(activation_name):
@@ -410,6 +415,7 @@ def main(args):
     	print_model_summary(args, model)
 
     # Set train dataset and dataloader
+    print('Set train data')
     read_baseline_train = True if args.read_baseline == 1 else False
     # if args.K > 1:
     #     train_dataset = create_dataset2(device, args.train_data_size, args.N,
@@ -422,6 +428,7 @@ def main(args):
 
     train_loader = prepare_data_loader(train_dataset, args)
     # Set validation dataset and dataloader 
+    print('Set validation data')
     read_baseline_val = True if args.read_baseline == 2 else False
     # if args.K > 1:
     #     val_dataset = create_dataset2(device, args.val_data_size, args.N,
@@ -429,7 +436,7 @@ def main(args):
     #                                  comp_baseline_folders, args.K)
     # else:
     val_dataset = create_dataset(device, args.val_data_size, args.K, args.N,
-                                 read_baseline_val, args.mode,
+                                 read_baseline_val, ['opt', 'none'],
                                  comp_baseline_folders)
     val_loader = prepare_data_loader(val_dataset, args)
     
@@ -464,12 +471,13 @@ def main(args):
     trainer.run()
     if wandb_flag:
         folder = f'figures/cnn_{args.suffix}'
-        fig_path = f'{folder}/x_vs_x_rec.png'
-        #wandb.upload_file(fig_path, f"x_vs_x_rec_ep{args.epochs - 1}.png")
-        artifact = wandb.Artifact("x_vs_x_rec", type="figure")
-        artifact.add_file(fig_path, 
-                          name=f"x_vs_x_rec.png")
-        run.log_artifact(artifact)
+        for k in range(args.K):
+            fig_path = f'{folder}/x_vs_x_rec_{k+1}.png'
+            #wandb.upload_file(fig_path, f"x_vs_x_rec_ep{args.epochs - 1}.png")
+            artifact = wandb.Artifact(f"x_vs_x_rec_{k+1}", type="figure")
+            artifact.add_file(fig_path, 
+                              name=f"x_vs_x_rec_{k+1}.png")
+            run.log_artifact(artifact)
     end_time = time.time()
         
     print(f"Time taken to train in {os.path.basename(__file__)}:", 
@@ -486,7 +494,7 @@ if __name__ == "__main__":
             help='Number of signals to reconstruct from')
     parser.add_argument('--batch_size', type=int, default=1, metavar='N',
             help='batch size')
-    parser.add_argument('--wandb_proj_name', type=str, default='GaussianBispectrumInversion', metavar='N',
+    parser.add_argument('--wandb_proj_name', type=str, default='BS_G_inv_multi_gpu', metavar='N',
             help='wandb project name')
     parser.add_argument('--save_every', type=int, default=100, metavar='N',
             help='save checkpoint every <save_every> epoch')
@@ -501,7 +509,7 @@ if __name__ == "__main__":
             ' \'CosineAnnealingLR\', \'CyclicLR\', \'Manual\'. '
             'Update configurtion parametes accordingly. '
             'default: \'None\' - no change in lr') 
-    parser.add_argument('--lr', type=float, default=1e-3, metavar='f',
+    parser.add_argument('--lr', type=float, default=1e-2, metavar='f',
             help='learning rate (initial for dynamic lr, otherwise fixed)')  
     parser.add_argument('--mode', type=str, nargs='+', default=['opt'],
             help= '[mode, add], mode in {\'rand\'\,\'opt\'}, add (optioanl) in {\'shift\', \'circular_shifts\'}'
@@ -531,6 +539,9 @@ if __name__ == "__main__":
     parser.add_argument('--loss_mode', type=str, default="l1",  
                         help='\'all\' - l1, mse, rel_mse. default: \'l1\' - l1 loss.'
                         'Note: the training loss is always l1') 
+    parser.add_argument('--loss_method', type=str, default="average",  
+                        help='one of \'average\', \'sum\'.'
+                        'Note: the training loss is always l1') 
     parser.add_argument('--read_baseline', type=int, default=0, 
                         help='0: no action, 1: read from matlab to training set'
                         '2: read from matlab to validation set')
@@ -548,7 +559,7 @@ if __name__ == "__main__":
     parser.add_argument('--early_stopping', action='store_true', 
                         help='early stopping after early_stopping times. '
                         'Update early_stopping in configuration') 
-    parser.add_argument('--optimizer', type=str, default="Adam",  
+    parser.add_argument('--optimizer', type=str, default="AdamW",  
                         help='The options are \"Adam\"\, \"SGD\"\, \"RMSprop\"\, \"AdamW\"\n'
                         'Please update relevant parameters in parameters file.') 
     
