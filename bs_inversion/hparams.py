@@ -18,9 +18,9 @@ hparams = HParams(
     #####################################
     # debug parameters
     #####################################
-    DEBUG = False,
+    DEBUG = True,
     debug_model = 3,
-    debug_N = 5,
+    debug_N = 20,
     debug_last_ch = 256,# 8 for 1, 2,
     debug_pre_conv_channels = [8, 32, 256], # [8, 32, 64, debug_last_ch]
     debug_pre_residuals = 11,
@@ -37,21 +37,10 @@ hparams = HParams(
     debug_channels_model2 = [256, 64],
     debug_channels_model3 = [256, 8], # [256, debug_last_ch]
     debug_scheduler = "OneCycleLR",
-    debug_read_baseline = 0,
-    debug_comp_test_name_m = 'test_1_sample_len_5',
+    debug_read_baseline = 2,
+    debug_comp_test_name_m = 'baseline_K_2_N_20',
     debug_K = 2,
-    debug_loss_method = "sum", #{"average", "sum"}
-    #####################################
-    # Training config
-    #####################################
-    # n_workers=2,
-    # seed=12345,
-    # batch_size=40,
-    # lr=1.0 * 1e-5,
-    # weight_decay=1e-5,
-    # epochs=50000,
-    # grad_clip_thresh=5.0,
-    # checkpoint_interval=1000,
+    debug_loss_method = "average", #{"average", "sum"}
     
     #####################################
     # loss config 
@@ -62,7 +51,7 @@ hparams = HParams(
     f4=0.,#loss_weighted_phase
     f5=0.,#_loss_l1
     ##########################
-    # dynamic lr (scheduler)
+    # scheduler config
     ##########################
     # Manual:
     manual_lr_f = 0.1,    
@@ -149,23 +138,8 @@ hparams = HParams(
     dbg_draw_rate=100,
     loss_lim = 1e-6,
     # comparison with baseline
-    data_root = '../data',
-    comp_n_runs_per_test = 10,
-
-    matlab_x_org_file = 'data_from_matlab/sample2/x_true.csv',
-    py_x_rec_file = 'data_from_matlab/sample2/py_x_est.csv',
-    matlab_x_rec_file = 'data_from_matlab/sample2/x_est.csv',
+    data_root = '../../Bispectrum_Cryo/data',
 )
-
-hparams2 = HParams(
-    #####################################
-    dbg_draw_rate=100,
-    )
-
-hparams3 = HParams(
-    #####################################
-    dbg_draw_rate=100,
-    )
 
 def hparams_debug_string():
     values = hparams.values()

@@ -41,6 +41,7 @@ class UnitVecDataset(Dataset):
         return idx, (self.source[idx], self.target[idx])
 
 def read_noisy(folder):
+    # Needs update
     sample_path = os.path.join(folder, 'data.csv')
     target = read_tensor_from_matlab(sample_path, True) 
     shifts = int(np.loadtxt(os.path.join(folder, 'shifts.csv'), delimiter=" "))
@@ -48,10 +49,13 @@ def read_noisy(folder):
     
     return target    
 
-def read_org(folder):
-    sample_path = os.path.join(folder, 'x_true.csv')
-    target = read_tensor_from_matlab(sample_path, True)  
-    
+def read_org(folder, k, K):
+    if K > 1:
+        sample_path = os.path.join(folder, f'x_true_{k+1}.csv')
+        target = read_tensor_from_matlab(sample_path, True)  
+    else:
+        sample_path = os.path.join(folder, 'x_true.csv')
+        target = read_tensor_from_matlab(sample_path, True)    
     return target  
 
 def set_read_func(folder_matlab):
@@ -61,48 +65,26 @@ def set_read_func(folder_matlab):
         f = read_org
     return f
 
-def read_dataset_from_baseline(comp_baseline_folders, data_size, K, N):
-
-    _, folder_matlab, _ = comp_baseline_folders
+def read_dataset_from_baseline(folder_matlab, data_size, K, N):
+    read_func = set_read_func(folder_matlab)
     data_size = min(data_size, len(os.listdir(folder_matlab)))
-    data_size_org = data_size
-    data_size = int(data_size / K)
     target = torch.zeros(data_size, K, N)
 
-    print(f'The updated data size is {data_size_org} / {K} = {data_size}')
-    
+    print(f'The updated data size is {data_size}')
+
     for i in range(data_size):
+        folder = os.path.join(folder_matlab, f'sample{i}')
         for j in range(K):
-            n = i * K + j
-            folder = os.path.join(folder_matlab, f'sample{n}')
-            read_func = set_read_func(folder_matlab)
-            
-            target[i][j] = read_func(folder)   
+            target[i][j] = read_func(folder, j, K)   
     
     return target
    
-# def read_dataset_from_baseline2(comp_baseline_folders, data_size, N, K=2):
-#     new_data_size = int(data_size / K)
-#     target = torch.zeros(new_data_size, 1, K * N)
-
-#     _, folder_matlab, _ = comp_baseline_folders
-#     data_size = min(new_data_size, int(len(os.listdir(folder_matlab)) / K))
-
-#     for i in range(int(data_size / K)):
-#         for j in range(K):
-#             folder = os.path.join(folder_matlab, f'sample{i+j}')
-#             read_func = set_read_func(folder_matlab)
-            
-#             target[i,:,j*N:j*N+N] = read_func(folder)   
-    
-#     return target 
-
 def create_dataset(device, data_size, K, N, read_baseline, mode, 
-                   comp_baseline_folders):
+                   folder_matlab):
     bs_calc = BispectrumCalculator(K, N, device).to(device)
     print(f'read_baseline={read_baseline}, mode={mode}')
     if read_baseline: # in val dataset
-        target = read_dataset_from_baseline(comp_baseline_folders, data_size, K, N)
+        target = read_dataset_from_baseline(folder_matlab, data_size, K, N)
     else:
         if mode[0] == 'opt':
             # Create random dataset
@@ -117,34 +99,6 @@ def create_dataset(device, data_size, K, N, read_baseline, mode,
     dataset = UnitVecDataset(source, target)
 
     return dataset
-
-# def create_dataset2(device, data_size, N, read_baseline, mode, 
-#                    comp_baseline_folders, K=2):
-#     bs_calc = BispectrumCalculator(N, device).to(device)
-#     print(f'read_baseline={read_baseline}, mode={mode}')
-#     if read_baseline: # in val dataset
-#         target = read_dataset_from_baseline2(comp_baseline_folders, data_size, N)
-#     else:
-#         if mode[0] == 'opt':
-#             # Create random dataset
-#             target = torch.randn(int(data_size / K), 1, K * N)
-#         elif mode[0] == 'rand':
-#             # Initialize dataset to zeros and create data on the fly 
-#             target = torch.zeros(int(data_size / K), 1, K * N)
-#     target.to(device)
-#     ch = 2
-#     source = torch.zeros(int(data_size / K), ch, N, N).to(device)
-
-#     for j in range(K):
-#         s, _ = bs_calc(target[:, :, j*N:j*N+N])
-#         source += s
-#     source /= K
-#     if mode[0] == 'opt' and mode[1] == 'shift' and not read_baseline:
-#             target, shifts = rand_shift_signal(target, N, data_size)
-#     dataset = UnitVecDataset(source, target)
-
-#     return dataset
-
 
 def set_activation(activation_name):
     #['ELU', 'LeakyReLU', 'ReLU', 'Softsign', 'Tanh'])
@@ -237,7 +191,7 @@ def get_model(device, args):
         )
     return model
 
-def set_debug_data(args):
+def set_debug_args(args):
     args.N = hparams.debug_N				
     hparams.pre_conv_channels = hparams.debug_pre_conv_channels
     hparams.pre_residuals = hparams.debug_pre_residuals
@@ -264,6 +218,7 @@ def set_debug_data(args):
     args.read_baseline = hparams.debug_read_baseline
     args.scheduler = hparams.debug_scheduler
     args.K = hparams.debug_K
+    args.loss_method = hparams.debug_loss_method
     return args
     
     
@@ -286,32 +241,24 @@ def print_model_summary(args, model):
     print(hparams)
 
 def init(args):
-    # Set wandb flag
-    wandb_flag = args.wandb
-
     if args.read_baseline:
-        folder_test = os.path.join(hparams.comp_root, args.comp_test_name)
-        if not os.path.exists(folder_test):
-            os.mkdir(folder_test)
-        folder_testm = os.path.join(hparams.comp_root, args.comp_test_name_m)
-        if not os.path.exists(folder_testm):
-            print('Error! folder_testm does not exist\n'
-                  f'path={folder_testm}')    
-            exit(1)
-        folder_matlab = os.path.join(folder_testm, 'data_from_matlab')
-        if not os.path.exists(folder_testm):
-            print('Error! folder_matlab does not exist\n'
-                  f'path={folder_matlab}') 
-            exit(1)
-        folder_python = os.path.join(folder_test, 'data_from_python')
+        # Set folder to write test data to
+        folder_python = os.path.join(os.path.join(hparams.data_root, 'tests'), 
+                                   args.comp_test_name)
         if not os.path.exists(folder_python):
             os.mkdir(folder_python)
+        # Set folder to read baseline data from
+        folder_matlab = os.path.join(os.path.join(hparams.data_root, 'baseline_data'), 
+                                                 args.comp_test_name_m)
+        if not os.path.exists(folder_matlab):
+            print('Error! folder_matlab does not exist\n'
+                  f'path={folder_matlab}')    
+            exit(1)
     else:
-        folder_test = ''
         folder_matlab = ''
         folder_python = ''
         
-    return wandb_flag, (folder_test, folder_matlab, folder_python)
+    return folder_matlab, folder_python
 
 def set_optimizer(args, model):
     
@@ -396,17 +343,22 @@ def update_suffix(args, debug):
     return args
 
 def main(args):
-    # set device
+    # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(device)
-    #hparams = set_hparams(args.config_mode)
+    
+    # Set debug flag
     DEBUG = hparams.DEBUG
-
+    # Set wandb flag
+    wandb_flag = args.wandb
+    
     if DEBUG ==  True:
-        args = set_debug_data(args)
+        args = set_debug_args(args)
 
     args = update_suffix(args, DEBUG)
-    wandb_flag, comp_baseline_folders = init(args)
+
+    # Initialize args
+    folder_matlab, folder_python = init(args)
     # Initialize model and optimizer
     model = get_model(device, args)
     optimizer = set_optimizer(args, model)
@@ -417,27 +369,19 @@ def main(args):
     # Set train dataset and dataloader
     print('Set train data')
     read_baseline_train = True if args.read_baseline == 1 else False
-    # if args.K > 1:
-    #     train_dataset = create_dataset2(device, args.train_data_size, args.N,
-    #                                    read_baseline_train, args.mode,
-    #                                    comp_baseline_folders, args.K)   
-    # else:#1
+
     train_dataset = create_dataset(device, args.train_data_size, args.K, args.N,
                                    read_baseline_train, args.mode,
-                                   comp_baseline_folders)
+                                   folder_matlab)
 
     train_loader = prepare_data_loader(train_dataset, args)
     # Set validation dataset and dataloader 
     print('Set validation data')
     read_baseline_val = True if args.read_baseline == 2 else False
-    # if args.K > 1:
-    #     val_dataset = create_dataset2(device, args.val_data_size, args.N,
-    #                                  read_baseline_val, args.mode,
-    #                                  comp_baseline_folders, args.K)
-    # else:
+
     val_dataset = create_dataset(device, args.val_data_size, args.K, args.N,
                                  read_baseline_val, ['opt', 'none'],
-                                 comp_baseline_folders)
+                                 folder_matlab)
     val_loader = prepare_data_loader(val_dataset, args)
     
     scheduler = set_scheduler(args.scheduler, optimizer, args.epochs, len(train_loader))
@@ -453,20 +397,28 @@ def main(args):
                       optimizer=optimizer,
                       scheduler=scheduler,
                       scheduler_name=args.scheduler,
-                      comp_baseline_folders=comp_baseline_folders,
+                      folder_matlab=folder_matlab,
+                      folder_python=folder_python,
                       args=args)
     
     start_time = time.time()
     run = None
     if wandb_flag:
         wandb.login()
-       	run = wandb.init(project=args.wandb_proj_name,
+        if args.wandb_run_id == '':
+            run = wandb.init(project=args.wandb_proj_name,
                	           name = f"{args.suffix}",
                	           config=args)
-        wandb.log({"cmd_line": sys.argv})
-        wandb.save('hparams.py')
-        wandb.save("train_main.py")
-        wandb.save(f"model{args.model}.py")        
+            wandb.log({"cmd_line": sys.argv})
+            wandb.save('hparams.py')
+            wandb.save("train_main.py")
+            wandb.save(f"model{args.model}.py")     
+        else: #resume run
+            run_id = args.wandb_run_id#'66by3hsu'
+            resume_mode = "must"
+            run = wandb.init(project=args.wandb_proj_name, 
+                             id=run_id, 
+                             resume=resume_mode)
     # Train and evaluate
     trainer.run()
     if wandb_flag:
@@ -549,6 +501,8 @@ if __name__ == "__main__":
     #evaluates to False if not provided, else True
     parser.add_argument('--wandb', action='store_true', 
                         help='Log data using wandb') 
+    parser.add_argument('--wandb_run_id', type=str, default="",
+                        help='run id to resume running. If not provided - new run.') 
     parser.add_argument('--maxout', action='store_true', 
                         help='True for maxout in middle layer, False for conv1 (default)')
     parser.add_argument('--pow_2_channels', action='store_true', 
