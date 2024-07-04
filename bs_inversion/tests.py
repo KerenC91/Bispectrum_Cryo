@@ -247,11 +247,63 @@ def test_align_data_plot(i):
     plt.savefig(out_path)        
     plt.close()
 
+def test_loss_mse_efficient():
+    bs = 2
+    K = 2
+    ch = 2
+    N = 3
+    iters = 20
+    for _ in range(iters):
+        pred = torch.randn(bs, K, N)
+        target = torch.randn(bs, K, N)
+        
+        # relative mse loss
+        loss = torch.zeros(pred.shape[1])
+        for k in range(pred.shape[1]):
+            loss[k] = torch.norm(pred[:,k,:] - target[:,k,:] )**2 / \
+                        torch.norm(target[:,k,:])**2
+        
+        loss1 = torch.mean(loss)
+        
+        loss2 = torch.mean(
+                    torch.norm(pred - target, dim=(0, 2))**2 / \
+                    torch.norm(target, dim=(0, 2))**2)
+        # loss3 = torch.norm(pred - target, dim=(1))**2 / \
+        #             torch.norm(target, dim=(1))**2
+        print(f'loss1={loss1}, loss2={loss2}, equality={loss1==loss2}')
+                        
+def test_loss_sc_efficient():
+    bs = 2
+    K = 2
+    ch = 2
+    N = 3
+    iters = 20
+    
+    for _ in range(iters):
+        bs_pred = torch.randn(bs, K, ch, N, N)
+        bs_gt = torch.randn(bs, K, ch, N, N)
+        sh = bs_pred.shape
+        # relative mse loss
+        loss = torch.zeros(sh[1])
+        for k in range(sh[1]):
+            loss[k] = torch.norm(bs_pred[:,k,:,:,:] - bs_gt[:,k,:,:,:] ) / torch.norm(bs_gt[:,k,:,:,:] )
+
+        
+        loss1 = torch.mean(loss)
+        
+        loss2 = torch.mean(
+                torch.norm((bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2)) / \
+                    torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2)))
+
+        print(f'loss1={loss1}, loss2={loss2}, equality={np.abs(loss1 - loss2) < 1e-6}')
+                        
+       
     
 if __name__ == "__main__":
     #test_bs_py_matlab()
     #test_bs_correlation()
-    test_align_data_plot(6)
+    #test_align_data_plot(6)
+    test_loss_sc_efficient()
     #test_signals_correlation_batch()
     #read_test_from_matlab()
     #test_VectorProcessor()
