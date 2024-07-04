@@ -18,7 +18,7 @@ hparams = HParams(
     #####################################
     # debug parameters
     #####################################
-    DEBUG = True,
+    DEBUG = False,
     debug_model = 3,
     debug_N = 5,
     debug_last_ch = 256,# 8 for 1, 2,
@@ -40,6 +40,7 @@ hparams = HParams(
     debug_read_baseline = 0,
     debug_comp_test_name_m = 'test_1_sample_len_5',
     debug_K = 2,
+    debug_loss_method = "sum", #{"average", "sum"}
     #####################################
     # Training config
     #####################################
@@ -60,7 +61,6 @@ hparams = HParams(
     f3=0.,#_loss_freq
     f4=0.,#loss_weighted_phase
     f5=0.,#_loss_l1
-    loss_method="sum", # {"average", "sum"}
     ##########################
     # dynamic lr (scheduler)
     ##########################
@@ -149,7 +149,7 @@ hparams = HParams(
     dbg_draw_rate=100,
     loss_lim = 1e-6,
     # comparison with baseline
-    comp_root = '/scratch/home/kerencohen2/Git/Bispectrum_Cryo/bs_inversion/baseline_comp',
+    data_root = '../data',
     comp_n_runs_per_test = 10,
 
     matlab_x_org_file = 'data_from_matlab/sample2/x_true.csv',
