@@ -329,7 +329,7 @@ def main(device, args):
     wandb_flag = args.wandb
     
     if device == 0:
-        args = set_debug_data(args)
+        if torch.cuda.is_available():
             print("GPU available!")
             
             # print("\nCUDA Memory Summary (High-Level):")
@@ -396,7 +396,7 @@ def main(device, args):
         run = None
         if wandb_flag:
             wandb.login()
-	        if args.wandb_run_id == '':
+            if args.wandb_run_id == '':
 	            run = wandb.init(project=args.wandb_proj_name,
 	                               name = f"{args.suffix}",
 	                               config=args)
@@ -404,12 +404,12 @@ def main(device, args):
 	            wandb.save('hparams.py')
 	            wandb.save("train_main.py")
 	            wandb.save(f"model{args.model}.py")        
-	        else: #resume run
-	            resume_mode = "must"
-	            run = wandb.init(project=args.wandb_proj_name, 
-	                             id=run_id, 
-	                             resume=resume_mode)
-    	dist.barrier()
+            else: #resume run
+                resume_mode = "must"
+                run = wandb.init(project=args.wandb_proj_name, 
+                                 id=args.wandb_run_id, 
+                                 resume=resume_mode)
+        dist.barrier()
 	# Train and evaluate
     trainer.run()
     # Get end time 
@@ -419,13 +419,13 @@ def main(device, args):
         # Only gpu 0 operating now...        
         if wandb_flag:
             folder = f'figures/cnn_{args.suffix}'
-	        for k in range(args.K):
-		        fig_path = f'{folder}/x_vs_x_rec_{k+1}.png'
+            for k in range(args.K):
+                fig_path = f'{folder}/x_vs_x_rec_{k+1}.png'
 		            #wandb.upload_file(fig_path, f"x_vs_x_rec_ep{args.epochs - 1}.png")
-		        artifact = wandb.Artifact(f"x_vs_x_rec_{k+1}", type="figure")
-		        artifact.add_file(fig_path, 
+                artifact = wandb.Artifact(f"x_vs_x_rec_{k+1}", type="figure")
+                artifact.add_file(fig_path, 
 		                          name=f"x_vs_x_rec_{k+1}.png")
-	            run.log_artifact(artifact)
+                run.log_artifact(artifact)
         end_time = time.time()
         
         print(f"Time taken to train in {os.path.basename(__file__)}:", 
@@ -462,7 +462,7 @@ if __name__ == "__main__":
     parser.add_argument('--lr', type=float, default=1e-2, metavar='f',
             help='learning rate (initial for dynamic lr, otherwise fixed)')  
     parser.add_argument('--mode', type=str, nargs='+', default=['opt'],
-            help= '[mode, add], mode in {\'rand\'\,\'opt\'}, add (optioanl) in {\'shift\', \'circular_shifts\'}'
+            help= '[mode, add], mode in {\'rand\',\'opt\'}, add (optioanl) in {\'shift\', \'circular_shifts\'}'
                 '\'rand\': Create random data during training.\n'
                     '\'opt\': Create a fixed dataset'
                     '\'shift\': Randomly shift the signal.\n'

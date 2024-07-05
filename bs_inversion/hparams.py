@@ -138,7 +138,7 @@ hparams = HParams(
     dbg_draw_rate=100,
     loss_lim = 1e-6,
     # comparison with baseline
-    data_root = '../../Bispectrum_Cryo/data',
+    data_root = '../data',
 )
 
 def hparams_debug_string():
