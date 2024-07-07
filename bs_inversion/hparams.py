@@ -18,7 +18,7 @@ hparams = HParams(
     #####################################
     # debug parameters
     #####################################
-    DEBUG = True,
+    DEBUG = False,
     debug_model = 3,
     debug_N = 20,
     debug_last_ch = 256,# 8 for 1, 2,
@@ -138,7 +138,8 @@ hparams = HParams(
     dbg_draw_rate=100,
     loss_lim = 1e-6,
     # comparison with baseline
-    data_root = '../../Bispectrum_Cryo/data',
+    data_root = '../data',
+    checkpoints_root = 'checkpoints'
 )
 
 def hparams_debug_string():

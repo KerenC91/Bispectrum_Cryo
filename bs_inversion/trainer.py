@@ -27,6 +27,7 @@ class Trainer:
                         scheduler_name,
                         folder_matlab,
                         folder_python,
+                        start_epoch,
                         args):
         self.device = device 
         self.train_loader = train_loader
@@ -44,6 +45,7 @@ class Trainer:
         self.wandb_flag = wandb_flag
         self.normalize = args.normalize
         self.mode = args.mode
+        self.start_epoch = start_epoch
         self.epoch = 0
         self.last_loss = torch.inf
         self.early_stopping = args.early_stopping
@@ -283,13 +285,14 @@ class Trainer:
         plt.savefig(fig_path)        
         plt.close()
             
-    def _save_checkpoint(self, epoch):
-        ckp = self.model.state_dict()
-        folder = f'./checkpoints/cnn_{self.suffix}'
-        PATH = f"{folder}/checkpoint_ep{epoch}.pt"
-        if not os.path.exists(folder):
-            os.makedirs(folder)
-        torch.save(ckp, PATH)
+    def _save_checkpoint(self):
+        if not os.path.exists(self.folder_python):
+            os.makedirs(self.folder_python)
+        torch.save({'epoch': self.epoch,
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict()}, 
+            f'{self.folder_python}/ckp.pt')
         
     def _run_epoch_train(self):
         total_loss = 0
@@ -491,7 +494,7 @@ class Trainer:
 
         
     def run(self):
-        for self.epoch in range(self.epochs):
+        for self.epoch in range(self.start_epoch + 1, self.epochs + 1):
             # train             
             train_loss = self.train()
             # validate
@@ -504,7 +507,8 @@ class Trainer:
             last_lr = self.optimizer.param_groups[0]['lr']
 
             # log loss with wandb
-            if self.wandb_flag and self.epoch % self.save_every == 0:
+            if self.wandb_flag and \
+                (self.epoch == 1 or self.epoch % self.save_every == 0):
                 wandb.log({"train_loss": train_loss})
                 wandb.log({"val_loss": val_loss})
                 wandb.log({"lr": self.optimizer.param_groups[0]['lr']})
@@ -514,7 +518,7 @@ class Trainer:
                     wandb.log({"val mse": val_mse_loss})
                     wandb.log({"val relative mse": val_rel_mse_loss})
             # save checkpoint and log loss to cmd 
-            if self.epoch % self.save_every == 0:
+            if self.epoch == 1 or self.epoch % self.save_every == 0:
                 print(f'-------Epoch {self.epoch}/{self.epochs}-------')
                 print(f'Total Train loss: {train_loss:.6f}')
                 print(f'Total Validation loss: {val_loss:.6f}')
@@ -526,9 +530,9 @@ class Trainer:
                 if self.scheduler_name != 'None':
                     print(f'lr: {last_lr}')
                 # save checkpoint
-                self._save_checkpoint(self.epoch)
+                self._save_checkpoint()
             # plot last output
-            if self.epoch == self.epochs - 1:
+            if self.epoch == self.epochs:
                 # folder = f'figures/cnn_{self.suffix}'
                 # self.plot_output_debug(self.last_target[0].detach().cpu().numpy(), 
                 #                        self.last_output[0].detach().cpu().numpy(),

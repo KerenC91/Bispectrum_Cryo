@@ -49,12 +49,12 @@ def read_noisy(folder):
     
     return target    
 
-def read_org(folder, k, K):
+def read_org(folder, k, K, label='x_true'):
     if K > 1:
-        sample_path = os.path.join(folder, f'x_true_{k+1}.csv')
+        sample_path = os.path.join(folder, f'{label}_{k+1}.csv')
         target = read_tensor_from_matlab(sample_path, True)  
     else:
-        sample_path = os.path.join(folder, 'x_true.csv')
+        sample_path = os.path.join(folder, f'{label}.csv')
         target = read_tensor_from_matlab(sample_path, True)    
     return target  
 
@@ -247,6 +247,8 @@ def init(args):
                                    args.comp_test_name)
         if not os.path.exists(folder_python):
             os.mkdir(folder_python)
+        else:
+            print(f'run {args.comp_test_name} already exists')
         # Set folder to read baseline data from
         folder_matlab = os.path.join(os.path.join(hparams.data_root, 'baseline_data'), 
                                                  args.comp_test_name_m)
@@ -385,7 +387,23 @@ def main(args):
     val_loader = prepare_data_loader(val_dataset, args)
     
     scheduler = set_scheduler(args.scheduler, optimizer, args.epochs, len(train_loader))
+    # if exists, load from checkpoint
+    ckp_path = os.path.join(f'{folder_python}', 'ckp.pt')
 
+    if os.path.exists(ckp_path):
+        print('checkpoint found, loading...')
+        checkpoint = torch.load(ckp_path)
+        epoch = checkpoint['epoch']
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model = model.to(device)
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        #scheduler.load_state_dict(checkpoint['scheduler_state_dict']) 
+
+        if epoch >= args.epochs:
+            print(f'Error! epoch={epoch} must be smaller then args.epochs={args.epochs}')
+            exit(1)
+    else:
+        epoch = 0
     # Initialize trainer
     trainer = Trainer(model=model, 
                       train_loader=train_loader, 
@@ -399,6 +417,7 @@ def main(args):
                       scheduler_name=args.scheduler,
                       folder_matlab=folder_matlab,
                       folder_python=folder_python,
+                      start_epoch=epoch,
                       args=args)
     
     start_time = time.time()
@@ -414,22 +433,13 @@ def main(args):
             wandb.save("train_main.py")
             wandb.save(f"model{args.model}.py")     
         else: #resume run
-            run_id = args.wandb_run_id#'66by3hsu'
+            run_id = args.wandb_run_id
             resume_mode = "must"
             run = wandb.init(project=args.wandb_proj_name, 
                              id=run_id, 
                              resume=resume_mode)
     # Train and evaluate
     trainer.run()
-    if wandb_flag:
-        folder = f'figures/cnn_{args.suffix}'
-        for k in range(args.K):
-            fig_path = f'{folder}/x_vs_x_rec_{k+1}.png'
-            #wandb.upload_file(fig_path, f"x_vs_x_rec_ep{args.epochs - 1}.png")
-            artifact = wandb.Artifact(f"x_vs_x_rec_{k+1}", type="figure")
-            artifact.add_file(fig_path, 
-                              name=f"x_vs_x_rec_{k+1}.png")
-            run.log_artifact(artifact)
     end_time = time.time()
         
     print(f"Time taken to train in {os.path.basename(__file__)}:", 
