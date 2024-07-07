@@ -27,6 +27,9 @@ class Trainer:
                         scheduler_name,
                         folder_matlab,
                         folder_python,
+                        start_epoch,
+						checkpoint,
+						map_location,
                         args):
         self.device = device 
         self.nprocs = args.nprocs
@@ -41,12 +44,22 @@ class Trainer:
         self.target_len = args.N
         self.signals_count = args.K
         self.save_every = args.save_every
-        self.model = model.to(self.device)
+		self.model = model.to(self.device)
+		if checkpoint != None:
+			self.model.load_state_dict(checkpoint['model_state_dict'])
+        	self.model = model.to(self.device)
+			optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+		    #scheduler.load_state_dict(checkpoint['scheduler_state_dict']) 
+
+	        if epoch >= args.epochs:
+	            print(f'Error! epoch={epoch} must be smaller then args.epochs={args.epochs}')
+	            exit(1)
         self.model = DDP(self.model, device_ids=[self.device], 
                          find_unused_parameters=False)
         self.wandb_flag = wandb_flag
         self.normalize = args.normalize
         self.mode = args.mode
+        self.start_epoch = start_epoch
         self.epoch = 0
         self.last_loss = torch.inf
         self.early_stopping = args.early_stopping
@@ -286,13 +299,14 @@ class Trainer:
         plt.savefig(fig_path)        
         plt.close()
             
-    def _save_checkpoint(self, epoch):
-        ckp = self.model.module.state_dict()
-        folder = f'./checkpoints/cnn_{self.suffix}'
-        PATH = f"{folder}/checkpoint_ep{epoch}.pt"
-        if not os.path.exists(folder):
-            os.makedirs(folder)
-        torch.save(ckp, PATH)
+    def _save_checkpoint(self):
+        if not os.path.exists(self.folder_python):
+            os.makedirs(self.folder_python)
+        torch.save({'epoch': self.epoch,
+            'model_state_dict': self.model.module.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict()}, 
+            f'{self.folder_python}/ckp.pt')
         
     def _run_epoch_train(self):
         total_loss = 0
@@ -501,7 +515,7 @@ class Trainer:
 
         
     def run(self):
-        for self.epoch in range(self.epochs):
+        for self.epoch in range(self.start_epoch + 1, self.epochs + 1):
             # print(torch.cuda.memory_summary(device=self.device, abbreviated=False))
             # print(torch.cuda.memory_stats(device=self.device))
             # train            
@@ -522,7 +536,7 @@ class Trainer:
             last_lr = self.optimizer.param_groups[0]['lr']
 
 
-            if self.epoch % self.save_every == 0:
+            if self.epoch == 1 or self.epoch % self.save_every == 0:
                 # Get loss from all processes
                 all_reduce(train_loss, op=dist.ReduceOp.SUM)
                 all_reduce(val_loss, op=dist.ReduceOp.SUM)
@@ -536,7 +550,8 @@ class Trainer:
             # Only gpu 0 operating now...
             if self.device == 0: 
                 # log loss with wandb
-                if self.wandb_flag and self.epoch % self.save_every == 0:
+	            if self.wandb_flag and \
+	                (self.epoch == 1 or self.epoch % self.save_every == 0):
                     wandb.log({"train_loss": train_loss.item()})
                     wandb.log({"val_loss": val_loss.item()})
                     wandb.log({"lr": self.optimizer.param_groups[0]['lr']})
@@ -546,7 +561,7 @@ class Trainer:
                         wandb.log({"val mse": val_mse_loss})
                         wandb.log({"val relative mse": val_rel_mse_loss})
                 # save checkpoint and log loss to cmd 
-                if self.epoch % self.save_every == 0:
+            	if self.epoch == 1 or self.epoch % self.save_every == 0:
                     print(f'-------Epoch {self.epoch}/{self.epochs}-------')
                     print(f'Total Train loss: {train_loss.item():.6f}')
                     print(f'Total Validation loss: {val_loss.item():.6f}')
@@ -558,9 +573,9 @@ class Trainer:
                     if self.scheduler_name != 'None':
                         print(f'lr: {last_lr}')
                     # save checkpoint
-                    self._save_checkpoint(self.epoch)
+                self._save_checkpoint(self.epoch)
                 # plot last output
-                if self.epoch == self.epochs - 1:
+            if self.epoch == self.epochs - 1:
 	                # folder = f'figures/cnn_{self.suffix}'
 	                # self.plot_output_debug(self.last_target[0].detach().cpu().numpy(), 
 	                #                        self.last_output[0].detach().cpu().numpy(),

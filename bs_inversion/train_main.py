@@ -51,12 +51,12 @@ def read_noisy(folder):
     
     return target    
 
-def read_org(folder, k, K):
+def read_org(folder, k, K, label='x_true'):
     if K > 1:
-        sample_path = os.path.join(folder, f'x_true_{k+1}.csv')
+        sample_path = os.path.join(folder, f'{label}_{k+1}.csv')
         target = read_tensor_from_matlab(sample_path, True)  
     else:
-        sample_path = os.path.join(folder, 'x_true.csv')
+        sample_path = os.path.join(folder, f'{label}.csv')
         target = read_tensor_from_matlab(sample_path, True)    
     return target  
 
@@ -220,6 +220,8 @@ def init(args):
                                    args.comp_test_name)
         if not os.path.exists(folder_python):
             os.mkdir(folder_python)
+        else:
+            print(f'run {args.comp_test_name} already exists')
         # Set folder to read baseline data from
         folder_matlab = os.path.join(os.path.join(hparams.data_root, 'baseline_data'), 
                                                  args.comp_test_name_m)
@@ -370,7 +372,19 @@ def main(device, args):
     val_loader = prepare_data_loader(val_dataset, args)
     
     scheduler = set_scheduler(args.scheduler, optimizer, args.epochs, len(train_loader))
+	
+	# configure map_location properly
+    map_location = {'cuda:%d' % 0: 'cuda:%d' % rank}
+    # if exists, load from checkpoint
+    ckp_path = os.path.join(f'{folder_python}', 'ckp.pt')
 
+    if os.path.exists(ckp_path):
+        print('checkpoint found, loading...')
+        checkpoint = torch.load(ckp_path)
+        epoch = checkpoint['epoch']
+
+    else:
+        epoch = 0
     # Initialize trainer
 
     trainer = Trainer(model=model, 
@@ -385,6 +399,9 @@ def main(device, args):
                       scheduler_name=args.scheduler,
                       folder_matlab=folder_matlab,
                       folder_python=folder_python,
+					  start_epoch=epoch,
+                      checkpoint=checkpoint,
+					  map_location=map_location,
                       args=args)
  
     # Get start time
@@ -417,15 +434,6 @@ def main(device, args):
         dist.barrier()
     if trainer.device == 0:
         # Only gpu 0 operating now...        
-        if wandb_flag:
-            folder = f'figures/cnn_{args.suffix}'
-            for k in range(args.K):
-                fig_path = f'{folder}/x_vs_x_rec_{k+1}.png'
-		            #wandb.upload_file(fig_path, f"x_vs_x_rec_ep{args.epochs - 1}.png")
-                artifact = wandb.Artifact(f"x_vs_x_rec_{k+1}", type="figure")
-                artifact.add_file(fig_path, 
-		                          name=f"x_vs_x_rec_{k+1}.png")
-                run.log_artifact(artifact)
         end_time = time.time()
         
         print(f"Time taken to train in {os.path.basename(__file__)}:", 
