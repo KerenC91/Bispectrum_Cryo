@@ -27,9 +27,7 @@ class Trainer:
                         scheduler_name,
                         folder_matlab,
                         folder_python,
-                        start_epoch,
 						checkpoint,
-						map_location,
                         args):
         self.device = device 
         self.nprocs = args.nprocs
@@ -46,20 +44,22 @@ class Trainer:
         self.save_every = args.save_every
 		self.model = model.to(self.device)
 		if checkpoint != None:
+			self.start_epoch = checkpoint['epoch']
 			self.model.load_state_dict(checkpoint['model_state_dict'])
         	self.model = model.to(self.device)
 			optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 		    #scheduler.load_state_dict(checkpoint['scheduler_state_dict']) 
 
 	        if epoch >= args.epochs:
-	            print(f'Error! epoch={epoch} must be smaller then args.epochs={args.epochs}')
+	            print(f'Error! self.start_epoch={self.start_epoch} must be smaller then args.epochs={args.epochs}')
 	            exit(1)
+		else:
+        	self.start_epoch = start_epoch		
         self.model = DDP(self.model, device_ids=[self.device], 
                          find_unused_parameters=False)
         self.wandb_flag = wandb_flag
         self.normalize = args.normalize
         self.mode = args.mode
-        self.start_epoch = start_epoch
         self.epoch = 0
         self.last_loss = torch.inf
         self.early_stopping = args.early_stopping

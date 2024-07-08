@@ -380,7 +380,7 @@ def main(device, args):
 
     if os.path.exists(ckp_path):
         print('checkpoint found, loading...')
-        checkpoint = torch.load(ckp_path)
+        checkpoint = torch.load(ckp_path, map_location=map_location)
         epoch = checkpoint['epoch']
 
     else:
@@ -399,9 +399,7 @@ def main(device, args):
                       scheduler_name=args.scheduler,
                       folder_matlab=folder_matlab,
                       folder_python=folder_python,
-					  start_epoch=epoch,
                       checkpoint=checkpoint,
-					  map_location=map_location,
                       args=args)
  
     # Get start time
