@@ -8,11 +8,9 @@ import numpy as np
 from torch.utils.data import DataLoader
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
-from torch.distributed import init_process_group, destroy_process_group, all_reduce
-import gc
-import sys
+from torch.distributed import all_reduce
 from utils import rand_shift_signal
-import pdb
+
 
 class Trainer:
     def __init__(self, model, 
@@ -42,19 +40,19 @@ class Trainer:
         self.target_len = args.N
         self.signals_count = args.K
         self.save_every = args.save_every
-		self.model = model.to(self.device)
-		if checkpoint != None:
-			self.start_epoch = checkpoint['epoch']
-			self.model.load_state_dict(checkpoint['model_state_dict'])
-        	self.model = model.to(self.device)
-			optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        self.model = model.to(self.device)
+        if checkpoint != None:
+            self.start_epoch = checkpoint['epoch']
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.model = model.to(self.device)
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 		    #scheduler.load_state_dict(checkpoint['scheduler_state_dict']) 
-
-	        if epoch >= args.epochs:
-	            print(f'Error! self.start_epoch={self.start_epoch} must be smaller then args.epochs={args.epochs}')
-	            exit(1)
-		else:
-        	self.start_epoch = start_epoch		
+            self.start_epoch = checkpoint['epoch']
+            if self.start_epoch >= args.epochs:
+                print(f'Error! self.start_epoch={self.start_epoch} must be smaller then args.epochs={args.epochs}')
+                exit(1)
+        else:
+        	self.start_epoch = 0		
         self.model = DDP(self.model, device_ids=[self.device], 
                          find_unused_parameters=False)
         self.wandb_flag = wandb_flag
@@ -495,11 +493,11 @@ class Trainer:
             if not os.path.exists(folder_k):
                 os.mkdir(folder_k)
 
-            x_est_path = os.path.join(folder_k, f'x_est.csv')
+            x_est_path = os.path.join(folder_k, 'x_est.csv')
             np.savetxt(x_est_path, 
                        x_est.squeeze(0)[k].cpu().detach().numpy())
             
-            x_true_path = os.path.join(folder_k, f'x_true.csv')
+            x_true_path = os.path.join(folder_k, 'x_true.csv')
             np.savetxt(x_true_path, 
                        x_true.squeeze(0)[k].cpu().detach().numpy())
             
@@ -516,16 +514,19 @@ class Trainer:
         
     def run(self):
         for self.epoch in range(self.start_epoch + 1, self.epochs + 1):
+            print(f'device{self.device}, epoch {self.epoch} started')
             # print(torch.cuda.memory_summary(device=self.device, abbreviated=False))
             # print(torch.cuda.memory_stats(device=self.device))
             # train            
             torch.cuda.empty_cache()
             self.train_loader.sampler.set_epoch(self.epoch)
             train_loss = self.train()
+            print(f'device{self.device}, epoch {self.epoch} after train')
             # validate
             torch.cuda.empty_cache()
             self.val_loader.sampler.set_epoch(self.epoch)
             val_loss = self.validate()
+            print(f'device{self.device}, epoch {self.epoch} after valid')
               
             if self.loss_mode == 'all':
                 train_loss, train_mse_loss, train_rel_mse_loss = train_loss
@@ -540,6 +541,7 @@ class Trainer:
                 # Get loss from all processes
                 all_reduce(train_loss, op=dist.ReduceOp.SUM)
                 all_reduce(val_loss, op=dist.ReduceOp.SUM)
+                print(f'device{self.device}, epoch {self.epoch} after all_reduce')
                 # Only gpu 0 operating now...
                 if self.device == 0: 
                     # update losses
@@ -550,18 +552,17 @@ class Trainer:
             # Only gpu 0 operating now...
             if self.device == 0: 
                 # log loss with wandb
-	            if self.wandb_flag and \
-	                (self.epoch == 1 or self.epoch % self.save_every == 0):
-                    wandb.log({"train_loss": train_loss.item()})
-                    wandb.log({"val_loss": val_loss.item()})
-                    wandb.log({"lr": self.optimizer.param_groups[0]['lr']})
-                    if self.loss_mode == 'all':
-                        wandb.log({"train mse": train_mse_loss})
-                        wandb.log({"train relative mse": train_rel_mse_loss})
-                        wandb.log({"val mse": val_mse_loss})
-                        wandb.log({"val relative mse": val_rel_mse_loss})
-                # save checkpoint and log loss to cmd 
-            	if self.epoch == 1 or self.epoch % self.save_every == 0:
+                if self.epoch == 1 or self.epoch % self.save_every == 0:
+                    if self.wandb_flag:
+                        wandb.log({"train_loss": train_loss.item()})
+                        wandb.log({"val_loss": val_loss.item()})
+                        wandb.log({"lr": self.optimizer.param_groups[0]['lr']})
+                        if self.loss_mode == 'all':
+                            wandb.log({"train mse": train_mse_loss})
+                            wandb.log({"train relative mse": train_rel_mse_loss})
+                            wandb.log({"val mse": val_mse_loss})
+                            wandb.log({"val relative mse": val_rel_mse_loss})
+                    # save checkpoint and log loss to cmd 
                     print(f'-------Epoch {self.epoch}/{self.epochs}-------')
                     print(f'Total Train loss: {train_loss.item():.6f}')
                     print(f'Total Validation loss: {val_loss.item():.6f}')
@@ -573,13 +574,9 @@ class Trainer:
                     if self.scheduler_name != 'None':
                         print(f'lr: {last_lr}')
                     # save checkpoint
-                self._save_checkpoint(self.epoch)
+                self._save_checkpoint()
                 # plot last output
-            if self.epoch == self.epochs - 1:
-	                # folder = f'figures/cnn_{self.suffix}'
-	                # self.plot_output_debug(self.last_target[0].detach().cpu().numpy(), 
-	                #                        self.last_output[0].detach().cpu().numpy(),
-	                #                        folder)
+                if self.epoch == self.epochs - 1:
                     if self.read_baseline != 0:
                         if self.read_baseline == 1: # train
                             self.write_python_test_results(self.train_dataset)
@@ -593,17 +590,13 @@ class Trainer:
                         if self.es_cnt == self.early_stopping:
                             print(f'Stooped at epoch {self.epoch}, after {self.es_cnt} times\n'
                                   f'last_loss={self.last_loss.item()}, curr_los={train_loss.item()}')
-                            folder = f'figures/cnn_{self.suffix}'
-	                        # self.plot_output_debug(self.last_target[0].detach().cpu().numpy(),
-	                        #                        self.last_output[0].detach().cpu().numpy(), 
-	                        #                        folder)
                             return
                 # stop if loss has reached lower bound
                 if train_loss.item() < hparams.loss_lim:
                     print(f'Stooped at epoch {self.epoch},\n'
                           f'curr_los={train_loss.item()} < {hparams.loss_lim}')    
                     self.last_loss = train_loss
-        
+            print(f'device{self.device}, epoch {self.epoch} finished')
         # test
         # if self.device == 0: 
         #     with torch.no_grad():

@@ -214,14 +214,15 @@ def print_model_summary(args, model):
     print(hparams)
 
 def init(args):
+
+    # Set folder to write test data to
+    folder_python = os.path.join(os.path.join(hparams.data_root, 'tests'), 
+                               args.comp_test_name)
+    if not os.path.exists(folder_python):
+        os.mkdir(folder_python)
+    else:
+        print(f'run {args.comp_test_name} already exists')
     if args.read_baseline:
-        # Set folder to write test data to
-        folder_python = os.path.join(os.path.join(hparams.data_root, 'tests'), 
-                                   args.comp_test_name)
-        if not os.path.exists(folder_python):
-            os.mkdir(folder_python)
-        else:
-            print(f'run {args.comp_test_name} already exists')
         # Set folder to read baseline data from
         folder_matlab = os.path.join(os.path.join(hparams.data_root, 'baseline_data'), 
                                                  args.comp_test_name_m)
@@ -231,7 +232,6 @@ def init(args):
             exit(1)
     else:
         folder_matlab = ''
-        folder_python = ''
         
     return folder_matlab, folder_python
 
@@ -374,17 +374,16 @@ def main(device, args):
     scheduler = set_scheduler(args.scheduler, optimizer, args.epochs, len(train_loader))
 	
 	# configure map_location properly
-    map_location = {'cuda:%d' % 0: 'cuda:%d' % rank}
+    map_location = {'cuda:%d' % 0: 'cuda:%d' % device}
     # if exists, load from checkpoint
     ckp_path = os.path.join(f'{folder_python}', 'ckp.pt')
 
     if os.path.exists(ckp_path):
         print('checkpoint found, loading...')
         checkpoint = torch.load(ckp_path, map_location=map_location)
-        epoch = checkpoint['epoch']
-
     else:
-        epoch = 0
+        checkpoint = None
+        
     # Initialize trainer
 
     trainer = Trainer(model=model, 
@@ -403,8 +402,8 @@ def main(device, args):
                       args=args)
  
     # Get start time
-    if trainer.device not in [-1, 0]:
-        dist.barrier()
+    # if trainer.device not in [-1, 0]:
+    #     dist.barrier()
     # Only gpu 0 operating now...
     if trainer.device == 0:
         start_time = time.time()
@@ -424,20 +423,21 @@ def main(device, args):
                 run = wandb.init(project=args.wandb_proj_name, 
                                  id=args.wandb_run_id, 
                                  resume=resume_mode)
-        dist.barrier()
+        # dist.barrier()
+    print(f'device{device} started')
 	# Train and evaluate
     trainer.run()
     # Get end time 
-    if trainer.device not in [-1, 0]:
-        dist.barrier()
+    # if trainer.device not in [-1, 0]:
+    #     dist.barrier()
     if trainer.device == 0:
         # Only gpu 0 operating now...        
         end_time = time.time()
         
         print(f"Time taken to train in {os.path.basename(__file__)}:", 
               end_time - start_time, "seconds")
-        dist.barrier()
-    
+        # dist.barrier()
+    print(f'device{device} finished')
     destroy_process_group()          
 
 if __name__ == "__main__":
