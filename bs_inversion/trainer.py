@@ -85,8 +85,8 @@ class Trainer:
     def _switch_position(self, pred, target):
         switch = False
         
-        bs_pred, pred = self.bs_calc(pred, self.loss_method)
-        bs_target, target = self.bs_calc(target, self.loss_method)
+        bs_pred, pred = self.bs_calc(pred, "sum")
+        bs_target, target = self.bs_calc(target, "sum")
         _, switch = self._switch_criterion(bs_pred, bs_target)
         if switch:
             pred = torch.flip(pred, dims=(-2,))
@@ -231,10 +231,10 @@ class Trainer:
 
         # Forward pass
         output = self.model(source) # reconstructed signal
-        if self.loss_method == 'sum':
+        if (not self.is_training) or (self.is_training and self.loss_method == 'sum'):
             output = self._switch_position(output, target)
         if not self.is_training:
-             output, _ = self.aligner(output, target)
+            output, _ = self.aligner(output, target)
              
         # Loss calculation
 
@@ -557,7 +557,7 @@ class Trainer:
                     print(f'lr: {last_lr}')
                 # save checkpoint
                 self._save_checkpoint()
-            # plot last output
+            # plot outputs on last epoch
             if self.epoch == self.epochs:
                 if self.read_baseline != 0:
                     if self.read_baseline == 1: # train

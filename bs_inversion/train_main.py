@@ -397,7 +397,7 @@ def main(args):
         model.load_state_dict(checkpoint['model_state_dict'])
         model = model.to(device)
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        #scheduler.load_state_dict(checkpoint['scheduler_state_dict']) 
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict']) 
 
         if epoch >= args.epochs:
             print(f'Error! epoch={epoch} must be smaller then args.epochs={args.epochs}')
