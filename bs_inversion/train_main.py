@@ -381,6 +381,7 @@ def main(device, args):
     if os.path.exists(ckp_path):
         print('checkpoint found, loading...')
         checkpoint = torch.load(ckp_path, map_location=map_location)
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict']) 
     else:
         checkpoint = None
         
