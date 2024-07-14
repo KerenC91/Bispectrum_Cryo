@@ -11,17 +11,18 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 import argparse
-from utils import clculate_bispectrum_efficient, align_to_reference
-from train_main import get_model, read_org
+from utils import clculate_bispectrum_efficient, align_to_reference, BatchAligneToReference, BispectrumCalculator
+from train_main import get_model, read_org, read_dataset_from_baseline, UnitVecDataset
 from compare_to_baseline import read_tensor_from_matlab
 from hparams import hparams
-
+from torch.utils.data import Dataset, DataLoader
+import numpy as np
 # Parse args
 parser = argparse.ArgumentParser(description='Inverting the bispectrum. Pulse dataset')
 
 parser.add_argument('--N', type=int, default=20, metavar='N',
         help='size of vector in the dataset')
-parser.add_argument('--K', type=int, default=1, metavar='N',
+parser.add_argument('--K', type=int, default=2, metavar='N',
         help='Number of signals to reconstruct from')
 parser.add_argument('--maxout', action='store_true', 
                     help='True for maxout in middle layer, False for conv1 (default)')
@@ -38,18 +39,21 @@ args = parser.parse_args()
 # Set device
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # Set args
-baseline_data_folder = 'baseline_K_1_N_20'
-model_folder = 'cnn_baseline_compt_N20_bs_100_ep15000_tr_d_sz5000_val_d_sz100_model3_[\'rand\', \'none\']_n_heads1_loss_all_lr_0.0869_dynamic_lr_OneCycleLR'
+baseline_data_folder = f'baseline_K_{args.K}_N_{args.N}'
+model_folder = 'test_K_2_offline_ep7800'
+test_folder = 'test_K_2_offline_ep7800'
 N = args.N
 K = args.K
 # Set baeline data path
 baseline_data_path = os.path.join(os.path.join(hparams.data_root, 'baseline_data'),
                                   baseline_data_folder)
 # Set model path
-model_path = os.path.join(os.path.join(hparams.checkpoints_root, model_folder),
-                          'checkpoint_ep14900.pt')
+model_path = os.path.join(os.path.join(os.path.join(hparams.data_root, 'tests'),
+                          model_folder),
+                          'ckp.pt')
+# Set output folder path
 output_path = os.path.join(os.path.join(hparams.data_root, 'tests'),
-                                        'offline_comp_compt')
+                                        test_folder)
 
 if not os.path.exists(output_path):
     os.mkdir(output_path)
@@ -88,34 +92,58 @@ def plot_output_debug2(target, output, folder, from_matlab=None):
     
 # load the model
 model = get_model(device, args)
-model.load_state_dict(torch.load(model_path))
+model.load_state_dict(torch.load(model_path)['model_state_dict'])
 model.eval()
+model.to(device)
 
 data_size = len(os.listdir(baseline_data_path))
 
+# Create Dataset
+target = read_dataset_from_baseline(baseline_data_path, data_size, K, N)
+target.to(device)
+bs_calc = BispectrumCalculator(K, N, device).to(device)
+source, target = bs_calc(target)
+source=source.to(device)
+target.to(device)
+dataset = UnitVecDataset(source, target)
+dataloader = DataLoader(
+    dataset=dataset,
+    batch_size=1,
+    pin_memory=False,
+    shuffle=False
+)
+baseline = torch.zeros(data_size, K, N)
 for i in range(data_size):
+    folder = os.path.join(baseline_data_path, f'sample{i}')
+    for j in range(K):
+        baseline[i][j] = read_org(folder, j, K, f"x_est") 
+aligner = BatchAligneToReference(device).to(device)
+avg_err = 0
+for idx, (source, target) in dataloader:
+    i = idx.item()
     folder_write = os.path.join(output_path, f'sample{i}')
     if not os.path.exists(folder_write):
         os.mkdir(folder_write)
     folder_read = os.path.join(baseline_data_path, f'sample{i}')
+    # pass the baseline samples bispectrum through the model
+    source = source.to(device)
+    output = model(source)
+    target = target.to(device)
+    output, _ = aligner(output, target)
     for j in range(K):
-        # read
-        target = read_org(folder_read, j, K, 'x_true').squeeze(0)
-        baseline = read_org(folder_read, j, K, 'x_est').squeeze(0)
-        # calculate output
-        bs = clculate_bispectrum_efficient(target)
-        bs_real = bs.real.float()
-        bs_imag = bs.imag.float()
-        source = torch.stack([bs_real, bs_imag], dim=0).unsqueeze(0)
-        # pass the baseline samples bispectrum through the model
-        output = model(source).squeeze(0).squeeze(0)
-        output, _ = align_to_reference(output, target)
         # set folder to write to
         folder_k = os.path.join(folder_write, f'{j+1}')
         if not os.path.exists(folder_k):
             os.mkdir(folder_k)
         # Draw the baseline vs model output
-        plot_output_debug2(target.cpu().detach().numpy(), 
-                               output.cpu().detach().numpy(),
+        plot_output_debug2(target.squeeze(0)[j].cpu().detach().numpy(), 
+                               output.squeeze(0)[j].cpu().detach().numpy(),
                                folder_k,
-                               baseline.cpu().detach().numpy())
+                               baseline[i][j])
+    rel_error_X = torch.norm(target - output) / torch.norm(target)
+    rel_error_X_path = os.path.join(folder_write, 'rel_error_X.csv')
+    np.savetxt(rel_error_X_path, [rel_error_X.item()])
+    print(f'sample{i}, err={rel_error_X}')        
+    avg_err += rel_error_X
+print(f'avg err={(avg_err / data_size):.08f}')        
+

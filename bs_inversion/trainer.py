@@ -85,6 +85,7 @@ class Trainer:
         bs_pred, _ = self.bs_calc(pred)
         bs_target, _ = self.bs_calc(target)
         total_loss = 0.
+
         if hparams.f1 != 0:
             loss_sc = self._loss_sc(bs_pred, bs_target)
             total_loss += hparams.f1 * loss_sc
@@ -94,10 +95,22 @@ class Trainer:
 
         return total_loss
 
+    def _switch_position(self, pred, target):
+        switch = False
+        
+        bs_pred, pred = self.bs_calc(pred, self.loss_method)
+        bs_target, target = self.bs_calc(target, self.loss_method)
+        _, switch = self._switch_criterion(bs_pred, bs_target)
+        if switch:
+            pred = torch.flip(pred, dims=(-2,))
+        
+        return pred
+    
     def _loss_all(self, pred, target):
         bs_pred, pred = self.bs_calc(pred, self.loss_method)
         bs_target, target = self.bs_calc(target, self.loss_method)            
         total_loss = 0.
+        
         if hparams.f1 != 0:
             loss_sc = self._loss_sc(bs_pred, bs_target, self.loss_method)
             total_loss += hparams.f1 * loss_sc
@@ -130,7 +143,6 @@ class Trainer:
         """
         if method == "sum":
             sh = bs_pred.shape
-
             loss = torch.mean(
                         torch.norm((bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2)) / \
                             torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2)))
@@ -138,6 +150,24 @@ class Trainer:
             loss = torch.norm(bs_pred - bs_gt) / torch.norm(bs_gt)
 
         return loss
+    
+    def _switch_criterion(self, bs_pred, bs_gt):
+        # for sum method only
+        sh = bs_pred.shape
+        reversed_bs_pred = torch.flip(bs_pred, dims=(1,))
+        loss1 = torch.mean(
+                    torch.norm((bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2)) / \
+                        torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2)))
+        loss2 = torch.mean(
+                    torch.norm((reversed_bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2)) / \
+                        torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2)))
+        # get the index for the minimal loss
+        i = np.argmin(np.array([loss1.item(), loss2.item()]))
+        # get the minimal loss
+        loss = torch.min(loss1, loss2)
+        switch = (i != 0)
+        
+        return loss, switch
     # target - ground truth image, source - Bispectrum of ground truth image
     # might be multiple targets and sources (batch size > 1)
 
@@ -214,11 +244,11 @@ class Trainer:
 
         # Forward pass
         output = self.model(source) # reconstructed signal
+        if self.loss_method == 'sum':
+            output = self._switch_position(output, target)
         if not self.is_training:
-        # if hparams.f5 > 0.:
              output, _ = self.aligner(output, target)
-        self.last_output = output
-        self.last_target = target
+             
         # Loss calculation
 
         loss = self.loss_f(output, target)
@@ -245,12 +275,8 @@ class Trainer:
         source = source.to(self.device)
         # Forward pass
         output = self.model(source) # reconstructed signal
-        # if self.mode[1] == 'shift':# and not self.is_training:
-        # if hparams.f5 > 0.:
-        #     output, _ = self.aligner(output, target)
-        self.last_output = output
-        # if self.epoch % hparams.dbg_draw_rate == 0:
-        #     self.plot_output_debug(target, output)
+        if self.loss_method == 'sum':
+            output = self._switch_position(output, target)
         
         # Loss calculation
         loss = self.loss_f(output, target)
@@ -476,15 +502,18 @@ class Trainer:
             target = target.to(self.device)
             source = source.to(self.device)
             # Forward pass
-            output = self.model(source) # reconstructed signal
-            output, _ = self.aligner(output, target)
-            self.save_python_test_data(idx.item(), output, target)
+            pred = self.model(source) # reconstructed signal
+            pred = self._switch_position(pred, target)
+            pred, _ = self.aligner(pred, target)
+                
+            self.save_python_test_data(idx.item(), pred, target)
             
     def save_python_test_data(self, i, x_est, x_true):
         folder = os.path.join(self.folder_python, f'sample{i+1}')
         if not os.path.exists(folder):
             os.mkdir(folder)
-            
+        #read from matlab
+        folder_m = os.path.join(self.folder_matlab, f'sample{i}')    
         rel_error_X = self._loss_rel_MSE(x_est, x_true).item()
         rel_error_X_path = os.path.join(folder, 'rel_error_X.csv')
         np.savetxt(rel_error_X_path, [rel_error_X])
@@ -501,9 +530,7 @@ class Trainer:
             np.savetxt(x_true_path, 
                        x_true.squeeze(0)[k].cpu().detach().numpy())
             
-            #read from matlab
-            folder_m = os.path.join(self.folder_matlab, f'sample{i * self.signals_count + k}')
-            file_path = os.path.join(folder_m, 'x_est.csv')
+            file_path = os.path.join(folder_m, f'x_est_{k+1}.csv')
             x_est_m = np.loadtxt(file_path, delimiter=" ")
             #save figure
             self.plot_output_debug2(x_true.squeeze(0)[k].cpu().detach().numpy(), 
