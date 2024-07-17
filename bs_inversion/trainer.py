@@ -67,6 +67,7 @@ class Trainer:
         self.folder_python = folder_python
         self.is_training = True
         self.loss_method = args.loss_method
+        self.plotting_off = args.plotting_off
     
     def _loss(self, pred, target):
         bs_pred, _ = self.bs_calc(pred)
@@ -268,42 +269,18 @@ class Trainer:
         # Loss calculation
         loss = self.loss_f(output, target)
         return loss
-    
-    
+            
     def plot_output_debug(self, target, output, folder, from_matlab=None):
-        if not os.path.exists(folder):
-            os.makedirs(folder)
-        for k in range(self.signals_count):
-            #folder_k = f'{folder}/{k+1}'
-            fig_path = f'{folder}/x_vs_x_rec_{k+1}.png' 
-            
-            # if not os.path.exists(folder_k):
-            #     os.makedirs(folder_k)
-                
-            plt.figure()
-            plt.title(f'Comparison between original signal {k+1}'
-                      f' and its reconstructions')
-            plt.plot(output[k], label='tested', color='tab:orange')
-            if from_matlab is not None:
-                plt.plot(from_matlab[k], label='baseline', color='tab:green')
-            plt.plot(target[k], label='org', color='tab:blue')
-            plt.ylabel('signal')
-            plt.xlabel('time')
-            #plt.legend()
-            plt.savefig(fig_path)        
-            plt.close()
-            
-    def plot_output_debug2(self, target, output, folder, from_matlab=None):
         if not os.path.exists(folder):
             os.makedirs(folder)
         fig_path = f'{folder}/x_vs_x_rec.png'     
       
         plt.figure()
         plt.title('Comparison between original signal and its reconstructions')
-        plt.plot(target, label='org')
-        plt.plot(output, label='tested')
+        plt.plot(output, label='tested', color='tab:orange')
         if from_matlab is not None:
-            plt.plot(from_matlab, label='baseline')
+            plt.plot(from_matlab, label='baseline', color='tab:green')
+        plt.plot(target, label='org', color='tab:blue')
         plt.ylabel('signal')
         plt.xlabel('time')
         plt.legend()
@@ -513,7 +490,7 @@ class Trainer:
             file_path = os.path.join(folder_m, f'x_est_{k+1}.csv')
             x_est_m = np.loadtxt(file_path, delimiter=" ")
             #save figure
-            self.plot_output_debug2(x_true.squeeze(0)[k].cpu().detach().numpy(), 
+            self.plot_output_debug(x_true.squeeze(0)[k].cpu().detach().numpy(), 
                                    x_est.squeeze(0)[k].cpu().detach().numpy(),
                                    folder_k,
                                    x_est_m)
@@ -558,7 +535,7 @@ class Trainer:
                 # save checkpoint
                 self._save_checkpoint()
             # plot outputs on last epoch
-            if self.epoch == self.epochs:
+            if self.epoch == self.epochs and self.plotting_off == False:
                 if self.read_baseline != 0:
                     if self.read_baseline == 1: # train
                         self.write_python_test_results(self.train_dataset)

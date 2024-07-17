@@ -528,6 +528,9 @@ if __name__ == "__main__":
     parser.add_argument('--early_stopping', action='store_true', 
                         help='early stopping after early_stopping times. '
                         'Update early_stopping in configuration') 
+    parser.add_argument('--plotting_off', action='store_true', 
+                        help='If set, do not plot data samples at the end. Can draw '
+                        'offline using saved checkpoint and initial samples.') 
     parser.add_argument('--optimizer', type=str, default="AdamW",  
                         help='The options are \"Adam\"\, \"SGD\"\, \"RMSprop\"\, \"AdamW\"\n'
                         'Please update relevant parameters in parameters file.') 
