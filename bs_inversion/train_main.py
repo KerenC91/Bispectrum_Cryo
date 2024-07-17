@@ -397,8 +397,10 @@ def main(args):
         model.load_state_dict(checkpoint['model_state_dict'])
         model = model.to(device)
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        scheduler.load_state_dict(checkpoint['scheduler_state_dict']) 
-
+        if args.scheduler_from_start: 
+            scheduler = set_scheduler(args.scheduler, optimizer, args.epochs - epoch, len(train_loader))
+        else:
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         if epoch >= args.epochs:
             print(f'Error! epoch={epoch} must be smaller then args.epochs={args.epochs}')
             exit(1)
@@ -471,6 +473,9 @@ if __name__ == "__main__":
             ' \'CosineAnnealingLR\', \'CyclicLR\', \'Manual\'. '
             'Update configurtion parametes accordingly. '
             'default: \'None\' - no change in lr') 
+    parser.add_argument('--scheduler_from_start', action='store_true', 
+                        help='In case of loading from checkpoint, if set, start scheduler from scratch.'
+                        ' Else, resume scheduler from checkpoint.') 
     parser.add_argument('--lr', type=float, default=1e-2, metavar='f',
             help='learning rate (initial for dynamic lr, otherwise fixed)')  
     parser.add_argument('--mode', type=str, nargs='+', default=['opt'],

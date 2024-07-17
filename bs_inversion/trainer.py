@@ -283,10 +283,10 @@ class Trainer:
             plt.figure()
             plt.title(f'Comparison between original signal {k+1}'
                       f' and its reconstructions')
-            plt.plot(target[k], label='org')
-            plt.plot(output[k], label='tested')
+            plt.plot(output[k], label='tested', color='tab:orange')
             if from_matlab is not None:
-                plt.plot(from_matlab[k], label='baseline')
+                plt.plot(from_matlab[k], label='baseline', color='tab:green')
+            plt.plot(target[k], label='org', color='tab:blue')
             plt.ylabel('signal')
             plt.xlabel('time')
             #plt.legend()
