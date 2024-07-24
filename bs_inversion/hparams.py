@@ -78,9 +78,9 @@ hparams = HParams(
 	#"cyc_lr_steps_per_epoch": len(train_loader),
     
     # CosineAnnealingLR - used as:
-    # cos_ann_lr_T_max = int(num_epochs * len(train_loader) / cos_ann_lr_T_max_f)
+    # cos_ann_lr_T_max = int(num_epochs * len(train_loader) * cos_ann_lr_T_max_f)
     # performs (cos_ann_lr_T_max_f / 2) cosine periods
-    cos_ann_lr_T_max_f = 3,
+    cos_ann_lr_T_max_f = 0.1,
     
     # CyclicLR
     # cyclic_lr_step_size_up = int(num_epochs * len(train_loader) / 2 / cyclic_lr_step_size_up_f)
@@ -134,7 +134,7 @@ hparams = HParams(
     ##########################
     # additional params
     ##########################
-    early_stopping = 100,
+    early_stopping = 1,
     dbg_draw_rate=100,
     loss_lim = 1e-6,
     # comparison with baseline

@@ -197,7 +197,7 @@ def set_debug_args(args):
     hparams.pre_residuals = hparams.debug_pre_residuals
     hparams.up_residuals = hparams.debug_up_residuals
     hparams.post_residuals = hparams.debug_post_residuals
-    hparams.n_heads = hparams.debug_n_heads
+    args.n_heads = hparams.debug_n_heads
     args.model = hparams.debug_model
     args.mode = hparams.debug_mode
     args.batch_size = hparams.debug_batch_size
@@ -205,11 +205,11 @@ def set_debug_args(args):
     args.comp_test_name_m = hparams.debug_comp_test_name_m
     args.comp_test_name = 'debug'
     if args.model == 2:
-        hparams.channels = hparams.debug_channels_model2
+        hparams.channels_model2 = hparams.debug_channels_model2
     elif args.model == 3:
-        hparams.channels = hparams.debug_channels_model3
+        hparams.channels_model3 = hparams.debug_channels_model3
     else:
-       hparams.channels = hparams.debug_channels_model1
+        hparams.channels_model1 = hparams.debug_channels_model1
     args.train_data_size = hparams.debug_train_data_size
     args.val_data_size = hparams.debug_val_data_size
     print('WARNING!! DEBUG value is True!')
@@ -222,11 +222,11 @@ def set_debug_args(args):
     return args
     
     
-def prepare_data_loader(dataset, args):
+def prepare_data_loader(dataset, batch_size):
     
     dataloader = DataLoader(
         dataset=dataset,
-        batch_size=args.batch_size,
+        batch_size=batch_size,
         pin_memory=False,
         shuffle=False
     )
@@ -241,14 +241,15 @@ def print_model_summary(args, model):
     print(hparams)
 
 def init(args):
+
+    # Set folder to write test data to
+    folder_python = os.path.join(os.path.join(hparams.data_root, 'tests'), 
+                               args.comp_test_name)
+    if not os.path.exists(folder_python):
+        os.mkdir(folder_python)
+    else:
+        print(f'run {args.comp_test_name} already exists')
     if args.read_baseline:
-        # Set folder to write test data to
-        folder_python = os.path.join(os.path.join(hparams.data_root, 'tests'), 
-                                   args.comp_test_name)
-        if not os.path.exists(folder_python):
-            os.mkdir(folder_python)
-        else:
-            print(f'run {args.comp_test_name} already exists')
         # Set folder to read baseline data from
         folder_matlab = os.path.join(os.path.join(hparams.data_root, 'baseline_data'), 
                                                  args.comp_test_name_m)
@@ -258,7 +259,6 @@ def init(args):
             exit(1)
     else:
         folder_matlab = ''
-        folder_python = ''
         
     return folder_matlab, folder_python
 
@@ -329,9 +329,7 @@ def set_scheduler(scheduler_name, optimizer, epochs, len_trainloader):
     
 
     
-def update_suffix(args, debug):
-    if debug == True:
-        args.suffix += 'debug'
+def update_suffix(args):
     args.suffix += f'{args.comp_test_name}'
     args.suffix += f'_N{args.N}_bs_{args.batch_size}_ep{args.epochs}'\
                     f'_tr_d_sz{args.train_data_size}_val_d_sz{args.val_data_size}'\
@@ -357,7 +355,7 @@ def main(args):
     if DEBUG ==  True:
         args = set_debug_args(args)
 
-    args = update_suffix(args, DEBUG)
+    args = update_suffix(args)
 
     # Initialize args
     folder_matlab, folder_python = init(args)
@@ -376,7 +374,7 @@ def main(args):
                                    read_baseline_train, args.mode,
                                    folder_matlab)
 
-    train_loader = prepare_data_loader(train_dataset, args)
+    train_loader = prepare_data_loader(train_dataset, args.batch_size)
     # Set validation dataset and dataloader 
     print('Set validation data')
     read_baseline_val = True if args.read_baseline == 2 else False
@@ -384,7 +382,7 @@ def main(args):
     val_dataset = create_dataset(device, args.val_data_size, args.K, args.N,
                                  read_baseline_val, ['opt', 'none'],
                                  folder_matlab)
-    val_loader = prepare_data_loader(val_dataset, args)
+    val_loader = prepare_data_loader(val_dataset, args.batch_size)
     
     scheduler = set_scheduler(args.scheduler, optimizer, args.epochs, len(train_loader))
     # if exists, load from checkpoint
@@ -415,6 +413,7 @@ def main(args):
                       wandb_flag=wandb_flag,
                       device=device,
                       optimizer=optimizer,
+                      optimizer_name=args.optimizer,
                       scheduler=scheduler,
                       scheduler_name=args.scheduler,
                       folder_matlab=folder_matlab,

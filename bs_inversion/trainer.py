@@ -23,6 +23,7 @@ class Trainer:
                         wandb_flag,
                         device,
                         optimizer,
+                        optimizer_name,
                         scheduler,
                         scheduler_name,
                         folder_matlab,
@@ -53,6 +54,7 @@ class Trainer:
         self.suffix = args.suffix
         self.n_heads = args.n_heads
         self.optimizer = optimizer
+        self.optimizer_name = optimizer_name
         self.read_baseline = args.read_baseline
         self.scheduler = scheduler
         self.scheduler_name = scheduler_name
@@ -543,19 +545,31 @@ class Trainer:
                         self.write_python_test_results(self.val_dataset)
 
             # stop early if early_stopping is on
-            if self.early_stopping != 0:
+            if self.early_stopping:
                 if self.last_loss < train_loss:
                     self.es_cnt +=1
-                    if self.es_cnt == self.early_stopping:
+                    if self.es_cnt == hparams.early_stopping:
                         print(f'Stooped at epoch {self.epoch}, after {self.es_cnt} times\n'
                               f'last_loss={self.last_loss}, curr_los={train_loss}')
                         folder = f'figures/cnn_{self.suffix}'
-                        return
+                        break
             # stop if loss has reached lower bound
             if train_loss < hparams.loss_lim:
+                print(f'-------Epoch {self.epoch}/{self.epochs}-------')
+                print(f'Total Train loss: {train_loss:.6f}')
+                print(f'Total Validation loss: {val_loss:.6f}')
+                if self.loss_mode == 'all':
+                    print(f'train mse loss: {train_mse_loss:.6f}')
+                    print(f'train relative mse loss: {train_rel_mse_loss:.6f}')
+                    print(f'val mse loss: {val_mse_loss:.6f}')
+                    print(f'val relative mse loss: {val_rel_mse_loss:.6f}')
+                if self.scheduler_name != 'None':
+                    print(f'lr: {last_lr}')
+
                 print(f'Stooped at epoch {self.epoch},\n'
                       f'curr_los={train_loss} < {hparams.loss_lim}')    
                 self.last_loss = train_loss
+                break
         
         # test
         with torch.no_grad():

@@ -12,7 +12,8 @@ optuna_params = OptParams(
     #####################################
     # args parameters
     #####################################
-    N = 100,
+    N = 20,
+    K = 2,
     batch_size = 1,
     train_data_size = 1,
     #epochs = 7000,
@@ -21,7 +22,10 @@ optuna_params = OptParams(
     channels_model3 = [256, 8],
     maxout = False,
     pow_2_channels = False,
-
+    read_baseline = False,
+    mode = ['opt', 'none'],
+    folder_matlab = "../../Bispectrum_Cryo/data/baseline_K_2_N_20",
+    loss_method = "average",
     #####################################
     # Training config
     #####################################
@@ -47,7 +51,7 @@ optuna_params = OptParams(
     ##########################
     # CNN params
     ##########################
-    last_ch = 8, # for all models: 8
+    last_ch = 256, # for all models: 8
     dilation_mid = 1,
     #channels = [256, 64], # for model1: [256, 8], for model2: [256, 64]  
                         # layer_channels list of values on each of heads
@@ -63,7 +67,7 @@ optuna_params = OptParams(
     ##########################
     early_stopping = 100,
     dbg_draw_rate=100,
-    loss_lim = 1e-6,
+    loss_lim = 1e-3,
     # comparison with baseline
     matlab_x_org_file = 'data_from_matlab/sample2/x_true.csv',
     py_x_rec_file = 'data_from_matlab/sample2/py_x_est.csv',
