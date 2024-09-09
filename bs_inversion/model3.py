@@ -166,11 +166,11 @@ class HeadBS3(nn.Module):
 
         #x = self.mid(x)
         #print(x.shape)
-        x *= self.f
+        #x *= self.f
         
         x2 = self.post_conv(x)
         #print(x2.shape)
-        x2 *= self.f
+        #x2 *= self.f
         
         return x2# pre, post
 

@@ -18,7 +18,7 @@ hparams = HParams(
     #####################################
     # debug parameters
     #####################################
-    DEBUG = True,
+    DEBUG = False,
     debug_model = 3,
     debug_N = 5,
     debug_last_ch = 256,# 8 for 1, 2,
@@ -69,12 +69,12 @@ hparams = HParams(
     # ReduceLROnPlateau    
     reduce_lr_factor = 0.1,
     reduce_lr_threshold = 1e-3,
-    reduce_lr_patience = 10,
-    reduce_lr_cooldown = 0,
+    reduce_lr_patience = 200,
+    reduce_lr_cool_down = 0,
 
     # StepLR
-    step_lr_step_size = 1000,
-    step_lr_gamma = 0.01,
+    step_lr_step_size = 2000,
+    step_lr_gamma = 0.94,
     
     # OneCycleLR
     cyc_lr_max_lr = 0.0015091109872566496,# taken from trial 152
@@ -134,12 +134,15 @@ hparams = HParams(
     dbg_draw_rate=100,
     loss_lim = 1e-6,
     # comparison with baseline
-    comp_root = '/scratch/home/kerencohen2/Git/Bispectrum_Cryo/bs_inversion/baseline_comp',
+    comp_root = '../../Bispectrum_Cryo/data/baseline_data',
     comp_n_runs_per_test = 10,
 
     matlab_x_org_file = 'data_from_matlab/sample2/x_true.csv',
     py_x_rec_file = 'data_from_matlab/sample2/py_x_est.csv',
     matlab_x_rec_file = 'data_from_matlab/sample2/x_est.csv',
+    
+    #Additional params
+    norm_bs = True,
 )
 
 hparams2 = HParams(

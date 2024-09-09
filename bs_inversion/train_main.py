@@ -239,30 +239,26 @@ def print_model_summary(args, model):
 def init(args):
     # Set wandb flag
     wandb_flag = args.wandb
-
+    
+    folder_python = os.path.join('../data/tests', args.comp_test_name)
+    if not os.path.exists(folder_python):
+        os.mkdir(folder_python)
+        
     if args.read_baseline:
-        folder_test = os.path.join(hparams.comp_root, args.comp_test_name)
-        if not os.path.exists(folder_test):
-            os.mkdir(folder_test)
         folder_testm = os.path.join(hparams.comp_root, args.comp_test_name_m)
         if not os.path.exists(folder_testm):
             print('Error! folder_testm does not exist\n'
                   f'path={folder_testm}')    
             exit(1)
-        folder_matlab = os.path.join(folder_testm, 'data_from_matlab')
+        folder_matlab = folder_testm
         if not os.path.exists(folder_testm):
             print('Error! folder_matlab does not exist\n'
                   f'path={folder_matlab}') 
             exit(1)
-        folder_python = os.path.join(folder_test, 'data_from_python')
-        if not os.path.exists(folder_python):
-            os.mkdir(folder_python)
     else:
-        folder_test = ''
         folder_matlab = ''
-        folder_python = ''
         
-    return wandb_flag, (folder_test, folder_matlab, folder_python)
+    return wandb_flag, ('', folder_matlab, folder_python)
 
 def set_optimizer(args, model):
     
@@ -298,7 +294,7 @@ def set_scheduler(scheduler_name, optimizer, epochs):
                 factor=hparams.reduce_lr_factor,
                 threshold=hparams.reduce_lr_threshold,
                 patience=hparams.reduce_lr_patience,
-                cool_down=hparams.reduce_lr_cool_down)
+                cooldown=hparams.reduce_lr_cool_down)
         elif scheduler_name == 'StepLR':
             scheduler = optim.lr_scheduler.StepLR(
                 optimizer=optimizer,
@@ -372,6 +368,8 @@ def main(args):
                                  read_baseline_val, args.mode,
                                  comp_baseline_folders)
     val_loader = prepare_data_loader(val_dataset, args)
+    
+    
     # Initialize trainer
     trainer = Trainer(model=model, 
                       train_loader=train_loader, 
