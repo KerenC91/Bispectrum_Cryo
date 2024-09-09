@@ -41,6 +41,7 @@ class UnitVecDataset(Dataset):
         return idx, (self.source[idx], self.target[idx])
 
 def read_noisy(folder):
+    # Needs update
     sample_path = os.path.join(folder, 'data.csv')
     target = read_tensor_from_matlab(sample_path, True) 
     shifts = int(np.loadtxt(os.path.join(folder, 'shifts.csv'), delimiter=" "))
@@ -48,8 +49,8 @@ def read_noisy(folder):
     
     return target    
 
-def read_org(folder):
-    sample_path = os.path.join(folder, 'x_true.csv')
+def read_org(folder, label='x_true'):
+    sample_path = os.path.join(folder, f'{label}.csv')
     target = read_tensor_from_matlab(sample_path, True)  
     
     return target  
@@ -61,27 +62,25 @@ def set_read_func(folder_matlab):
         f = read_org
     return f
 
-def read_dataset_from_baseline(comp_baseline_folders, data_size, N):
-    target = torch.zeros(data_size, 1, N)
-
-    _, folder_matlab, _ = comp_baseline_folders
+def read_dataset_from_baseline(folder_matlab, data_size, N, K=1):
+    read_func = set_read_func(folder_matlab)
     data_size = min(data_size, len(os.listdir(folder_matlab)))
+    target = torch.zeros(data_size, K, N)
+
+    print(f'The updated data size is {data_size}')
 
     for i in range(data_size):
-
-        folder = os.path.join(folder_matlab, f'sample{i}')
-        read_func = set_read_func(folder_matlab)
-        
+        folder = os.path.join(folder_matlab, f'sample{i}')       
         target[i] = read_func(folder)   
     
     return target
     
 def create_dataset(device, data_size, N, read_baseline, mode, 
-                   comp_baseline_folders):
+                   folder_matlab):
     bs_calc = BispectrumCalculator(N, device).to(device)
     print(f'read_baseline={read_baseline}, mode={mode}')
     if read_baseline: # in val dataset
-        target = read_dataset_from_baseline(comp_baseline_folders, data_size, N)
+        target = read_dataset_from_baseline(folder_matlab, data_size, N)
     else:
         if mode[0] == 'opt':
             # Create random dataset
@@ -173,28 +172,29 @@ def get_model(device, args):
     model = CNNBS(
         device=device,
         input_len=args.N,
+        signals_count=1,
         n_heads=args.n_heads,
         channels=channels,
-        b_maxout = args.maxout,
+        b_maxout=args.maxout,
         pre_conv_channels=hparams.pre_conv_channels,
         pre_residuals=hparams.pre_residuals,
         up_residuals=hparams.up_residuals,
         post_residuals=hparams.post_residuals,
         pow_2_channels=args.pow_2_channels,
         reduce_height=reduce_height,
-        head_class = head_class,
+        head_class=head_class,
         linear_ch=hparams.last_ch,
         activation=activation
         )
     return model
 
-def set_debug_data(args):
+def set_debug_args(args):
     args.N = hparams.debug_N				
     hparams.pre_conv_channels = hparams.debug_pre_conv_channels
     hparams.pre_residuals = hparams.debug_pre_residuals
     hparams.up_residuals = hparams.debug_up_residuals
     hparams.post_residuals = hparams.debug_post_residuals
-    hparams.n_heads = hparams.debug_n_heads
+    args.n_heads = hparams.debug_n_heads
     args.model = hparams.debug_model
     args.mode = hparams.debug_mode
     args.batch_size = hparams.debug_batch_size
@@ -202,11 +202,11 @@ def set_debug_data(args):
     args.comp_test_name_m = hparams.debug_comp_test_name_m
     args.comp_test_name = 'debug'
     if args.model == 2:
-        hparams.channels = hparams.debug_channels_model2
+        hparams.channels_model2 = hparams.debug_channels_model2
     elif args.model == 3:
-        hparams.channels = hparams.debug_channels_model3
+        hparams.channels_model3 = hparams.debug_channels_model3
     else:
-       hparams.channels = hparams.debug_channels_model1
+        hparams.channels_model1 = hparams.debug_channels_model1
     args.train_data_size = hparams.debug_train_data_size
     args.val_data_size = hparams.debug_val_data_size
     print('WARNING!! DEBUG value is True!')
@@ -218,11 +218,11 @@ def set_debug_data(args):
     return args
     
     
-def prepare_data_loader(dataset, args):
+def prepare_data_loader(dataset, batch_size):
     
     dataloader = DataLoader(
         dataset=dataset,
-        batch_size=args.batch_size,
+        batch_size=batch_size,
         pin_memory=False,
         shuffle=False
     )
@@ -237,28 +237,26 @@ def print_model_summary(args, model):
     print(hparams)
 
 def init(args):
-    # Set wandb flag
-    wandb_flag = args.wandb
-    
-    folder_python = os.path.join('../data/tests', args.comp_test_name)
+
+    # Set folder to write test data to
+    folder_python = os.path.join(os.path.join(hparams.data_root, 'tests'), 
+                               args.comp_test_name)
     if not os.path.exists(folder_python):
         os.mkdir(folder_python)
-        
+    else:
+        print(f'run {args.comp_test_name} already exists')
     if args.read_baseline:
-        folder_testm = os.path.join(hparams.comp_root, args.comp_test_name_m)
-        if not os.path.exists(folder_testm):
-            print('Error! folder_testm does not exist\n'
-                  f'path={folder_testm}')    
-            exit(1)
-        folder_matlab = folder_testm
-        if not os.path.exists(folder_testm):
+        # Set folder to read baseline data from
+        folder_matlab = os.path.join(os.path.join(hparams.data_root, 'baseline_data'), 
+                                                 args.comp_test_name_m)
+        if not os.path.exists(folder_matlab):
             print('Error! folder_matlab does not exist\n'
-                  f'path={folder_matlab}') 
+                  f'path={folder_matlab}')    
             exit(1)
     else:
         folder_matlab = ''
         
-    return wandb_flag, ('', folder_matlab, folder_python)
+    return folder_matlab, folder_python
 
 def set_optimizer(args, model):
     
@@ -284,7 +282,7 @@ def set_optimizer(args, model):
     return optimizer
 
 
-def set_scheduler(scheduler_name, optimizer, epochs):
+def set_scheduler(scheduler_name, optimizer, epochs, len_trainloader):
     scheduler = None
     if scheduler_name != 'None':
         if scheduler_name == 'ReduceLROnPlateau':
@@ -294,7 +292,7 @@ def set_scheduler(scheduler_name, optimizer, epochs):
                 factor=hparams.reduce_lr_factor,
                 threshold=hparams.reduce_lr_threshold,
                 patience=hparams.reduce_lr_patience,
-                cooldown=hparams.reduce_lr_cool_down)
+                cooldown=hparams.reduce_lr_cooldown)
         elif scheduler_name == 'StepLR':
             scheduler = optim.lr_scheduler.StepLR(
                 optimizer=optimizer,
@@ -303,26 +301,30 @@ def set_scheduler(scheduler_name, optimizer, epochs):
         elif scheduler_name == 'OneCycleLR':
             scheduler = optim.lr_scheduler.OneCycleLR(
                 optimizer=optimizer,
-                max_lr = hparams.cyc_lr_max_lr,
-                steps_per_epoch =1,
-                epochs= epochs,
-                pct_start = hparams.cyc_lr_pct_start,
-                anneal_strategy=hparams.cyc_lr_anneal_strategy)  
+                max_lr=hparams.cyc_lr_max_lr,
+                steps_per_epoch=len_trainloader,
+                epochs=epochs,
+                pct_start=hparams.cyc_lr_pct_start,
+                anneal_strategy=hparams.cyc_lr_anneal_strategy)#,
+                #three_pahse=hparams.cyc_lr_three_pahse)  
         elif scheduler_name == 'CosineAnnealingLR':
             scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 optimizer=optimizer,
-                T_max=hparams.cos_ann_lr_T_max) 
+                T_max=epochs * len_trainloader * hparams.cos_ann_lr_T_max_f) 
         elif scheduler_name == 'CyclicLR':        
             scheduler = optim.lr_scheduler.CyclicLR(
                 optimizer=optimizer,
+                mode=hparams.cyclic_lr_mode,
                 base_lr=hparams.cyclic_lr_base_lr, 
-                max_lr=hparams.cyclic_lr_max_lr) 
+
+                max_lr=hparams.cyclic_lr_max_lr,
+                step_size_up=int(epochs * len_trainloader / 2 / hparams.cyclic_lr_step_size_up_f),
+                gamma=hparams.cyclic_lr_gamma) 
+
         return scheduler
 
     
-def update_suffix(args, debug):
-    if debug == True:
-        args.suffix += 'debug'
+def update_suffix(args):
     args.suffix += f'{args.comp_test_name}'
     args.suffix += f'_N{args.N}_bs_{args.batch_size}_ep{args.epochs}'\
                     f'_tr_d_sz{args.train_data_size}_val_d_sz{args.val_data_size}'\
@@ -336,40 +338,68 @@ def update_suffix(args, debug):
     return args
 
 def main(args):
-    # set device
+    # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(device)
-    #hparams = set_hparams(args.config_mode)
+    
+    # Set debug flag
     DEBUG = hparams.DEBUG
-
+    # Set wandb flag
+    wandb_flag = args.wandb
+    
     if DEBUG ==  True:
-        args = set_debug_data(args)
+        args = set_debug_args(args)
 
-    args = update_suffix(args, DEBUG)
-    wandb_flag, comp_baseline_folders = init(args)
+    args = update_suffix(args)
+    
+    # Initialize args
+    folder_matlab, folder_python = init(args)
     # Initialize model and optimizer
     model = get_model(device, args)
     optimizer = set_optimizer(args, model)
-    scheduler = set_scheduler(args.scheduler, optimizer, args.epochs)
+
     # print and save model
     if args.log_level >= 2:
     	print_model_summary(args, model)
 
     # Set train dataset and dataloader
+    print('Set train data')
     read_baseline_train = True if args.read_baseline == 1 else False
     train_dataset = create_dataset(device, args.train_data_size, args.N,
                                    read_baseline_train, args.mode,
-                                   comp_baseline_folders)
+                                   folder_matlab)
 
-    train_loader = prepare_data_loader(train_dataset, args)
+    train_loader = prepare_data_loader(train_dataset, args.batch_size)
     # Set validation dataset and dataloader 
+    print('Set validation data')
     read_baseline_val = True if args.read_baseline == 2 else False
     val_dataset = create_dataset(device, args.val_data_size, args.N,
-                                 read_baseline_val, args.mode,
-                                 comp_baseline_folders)
-    val_loader = prepare_data_loader(val_dataset, args)
+                                 read_baseline_val, ['opt', 'none'],
+                                 folder_matlab)
+    val_loader = prepare_data_loader(val_dataset, args.batch_size)
     
+    scheduler = set_scheduler(args.scheduler, optimizer, args.epochs, len(train_loader))
+    # if exists, load from checkpoint
+    ckp_path = os.path.join(f'{folder_python}', 'ckp.pt')
     
+    if os.path.exists(ckp_path):
+        print('checkpoint found, loading...')
+        print(f'{ckp_path}')
+        checkpoint = torch.load(ckp_path)
+        epoch = checkpoint['epoch']
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model = model.to(device)
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        if args.scheduler_from_start: 
+            scheduler = set_scheduler(args.scheduler, optimizer, args.epochs - epoch, len(train_loader))
+        else:
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        if epoch >= args.epochs:
+            print(f'Error! epoch={epoch} must be smaller then args.epochs={args.epochs}')
+            exit(1)
+    else:
+        epoch = 0    
+        
     # Initialize trainer
     trainer = Trainer(model=model, 
                       train_loader=train_loader, 
@@ -379,32 +409,35 @@ def main(args):
                       wandb_flag=wandb_flag,
                       device=device,
                       optimizer=optimizer,
+                      optimizer_name=args.optimizer,
                       scheduler=scheduler,
                       scheduler_name=args.scheduler,
-                      comp_baseline_folders=comp_baseline_folders,
+                      folder_matlab=folder_matlab,
+                      folder_python=folder_python,
+                      start_epoch=epoch,
                       args=args)
     
     start_time = time.time()
     run = None
     if wandb_flag:
         wandb.login()
-       	run = wandb.init(project=args.wandb_proj_name,
+        if args.wandb_run_id == '':
+            run = wandb.init(project=args.wandb_proj_name,
                	           name = f"{args.suffix}",
                	           config=args)
-        wandb.log({"cmd_line": sys.argv})
-        wandb.save('hparams.py')
-        wandb.save("train_main.py")
-        wandb.save(f"model{args.model}.py")        
+            wandb.log({"cmd_line": sys.argv})
+            wandb.save('hparams.py')
+            wandb.save("train_main.py")
+            wandb.save(f"model{args.model}.py")     
+        else: #resume run
+            run_id = args.wandb_run_id
+            resume_mode = "must"
+            run = wandb.init(project=args.wandb_proj_name, 
+                             id=run_id, 
+                             resume=resume_mode)      
     # Train and evaluate
     trainer.run()
-    if wandb_flag:
-        folder = f'figures/cnn_{args.suffix}'
-        fig_path = f'{folder}/x_vs_x_rec.png'
-        #wandb.upload_file(fig_path, f"x_vs_x_rec_ep{args.epochs - 1}.png")
-        artifact = wandb.Artifact("x_vs_x_rec", type="figure")
-        artifact.add_file(fig_path, 
-                          name=f"x_vs_x_rec.png")
-        run.log_artifact(artifact)
+
     end_time = time.time()
         
     print(f"Time taken to train in {os.path.basename(__file__)}:", 
@@ -419,7 +452,7 @@ if __name__ == "__main__":
             help='size of vector in the dataset')
     parser.add_argument('--batch_size', type=int, default=1, metavar='N',
             help='batch size')
-    parser.add_argument('--wandb_proj_name', type=str, default='GaussianBispectrumInversion', metavar='N',
+    parser.add_argument('--wandb_proj_name', type=str, default='BS_G_inv_multi_gpu', metavar='N',
             help='wandb project name')
     parser.add_argument('--save_every', type=int, default=100, metavar='N',
             help='save checkpoint every <save_every> epoch')
@@ -434,7 +467,7 @@ if __name__ == "__main__":
             ' \'CosineAnnealingLR\', \'CyclicLR\', \'Manual\'. '
             'Update configurtion parametes accordingly. '
             'default: \'None\' - no change in lr') 
-    parser.add_argument('--lr', type=float, default=1e-3, metavar='f',
+    parser.add_argument('--lr', type=float, default=3e-4, metavar='f',
             help='learning rate (initial for dynamic lr, otherwise fixed)')  
     parser.add_argument('--mode', type=str, nargs='+', default=['opt'],
             help= '[mode, add], mode in {\'rand\'\,\'opt\'}, add (optioanl) in {\'shift\', \'circular_shifts\'}'
@@ -444,8 +477,6 @@ if __name__ == "__main__":
                     '\'circular_shifts\': shift the signal circularly for every bbatch') 
     parser.add_argument('--suffix', type=str, default='',
             help='suffix to add to the name of the cnn yml file')  
-    parser.add_argument('--config_mode', type=int, default=0, 
-            help='0 for hparams, 2 for hparams2, 3 for hparams3') 
     parser.add_argument('--comp_test_name', type=str, default='',
             help='test name') 
     parser.add_argument('--comp_test_name_m', type=str, default='',
@@ -473,6 +504,8 @@ if __name__ == "__main__":
     #evaluates to False if not provided, else True
     parser.add_argument('--wandb', action='store_true', 
                         help='Log data using wandb') 
+    parser.add_argument('--wandb_run_id', type=str, default="",
+                        help='run id to resume running. If not provided - new run.')
     parser.add_argument('--maxout', action='store_true', 
                         help='True for maxout in middle layer, False for conv1 (default)')
     parser.add_argument('--pow_2_channels', action='store_true', 
@@ -483,7 +516,10 @@ if __name__ == "__main__":
     parser.add_argument('--early_stopping', action='store_true', 
                         help='early stopping after early_stopping times. '
                         'Update early_stopping in configuration') 
-    parser.add_argument('--optimizer', type=str, default="Adam",  
+    parser.add_argument('--plotting_off', action='store_true', 
+                    help='If set, do not plot data samples at the end. Can draw '
+                    'offline using saved checkpoint and initial samples.') 
+    parser.add_argument('--optimizer', type=str, default="AdamW",  
                         help='The options are \"Adam\"\, \"SGD\"\, \"RMSprop\"\, \"AdamW\"\n'
                         'Please update relevant parameters in parameters file.') 
     

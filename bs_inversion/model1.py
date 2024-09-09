@@ -147,7 +147,7 @@ class CNNBS(nn.Module):
         n_heads (int): Number of heads
         layer_channels (list): list of #channels of each layer
     """
-    def __init__(self, device, input_len, n_heads, 
+    def __init__(self, device, input_len, signals_count, n_heads, 
          channels,
          b_maxout,
          pre_conv_channels,
@@ -163,7 +163,7 @@ class CNNBS(nn.Module):
         super(CNNBS, self).__init__()
         self.device = device
         self.n_heads = n_heads
-        self.linear = nn.Linear(linear_ch, 1)
+        self.linear = nn.Linear(linear_ch, signals_count)
         self.Head = head_class
         self.act_fn = activation
             

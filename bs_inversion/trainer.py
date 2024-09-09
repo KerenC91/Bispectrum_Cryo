@@ -15,17 +15,20 @@ from utils import rand_shift_signal
 
 class Trainer:
     def __init__(self, model, 
-                 train_loader, 
-                 val_loader, 
-                 train_dataset,
-                 val_dataset,
-                 wandb_flag,
-                 device,
-                 optimizer,
-                 scheduler,
-                 scheduler_name,
-                 comp_baseline_folders,
-                 args):
+                        train_loader, 
+                        val_loader, 
+                        train_dataset,
+                        val_dataset,
+                        wandb_flag,
+                        device,
+                        optimizer,
+                        optimizer_name,
+                        scheduler,
+                        scheduler_name,
+                        folder_matlab,
+                        folder_python,
+                        start_epoch,
+                        args):
         self.device = device 
         self.train_loader = train_loader
         self.val_loader = val_loader
@@ -36,11 +39,13 @@ class Trainer:
         self.train_data_size = args.train_data_size
         self.val_data_size = args.val_data_size
         self.target_len = args.N
+        self.signals_count = 1
         self.save_every = args.save_every
         self.model = model.to(self.device)
         self.wandb_flag = wandb_flag
         self.normalize = args.normalize
         self.mode = args.mode
+        self.start_epoch = start_epoch
         self.epoch = 0
         self.last_loss = torch.inf
         self.early_stopping = args.early_stopping
@@ -48,6 +53,7 @@ class Trainer:
         self.suffix = args.suffix
         self.n_heads = args.n_heads
         self.optimizer = optimizer
+        self.optimizer_name = optimizer_name
         self.read_baseline = args.read_baseline
         self.scheduler = scheduler
         self.scheduler_name = scheduler_name
@@ -58,26 +64,19 @@ class Trainer:
             self.loss_f = self._loss
         self.bs_calc = BispectrumCalculator(self.target_len, self.device).to(self.device)
         self.aligner = BatchAligneToReference(self.device).to(self.device)
-        self.folder_test, self.folder_matlab, self.folder_python = \
-                        comp_baseline_folders
+        self.folder_matlab = folder_matlab
+        self.folder_python = folder_python
         self.is_training = True
+        self.plotting_off = args.plotting_off
     
     def _loss(self, pred, target):
         bs_pred, _ = self.bs_calc(pred)
         bs_target, _ = self.bs_calc(target)
         total_loss = 0.
+        
         if hparams.f1 != 0:
             loss_sc = self._loss_sc(bs_pred, bs_target)
             total_loss += hparams.f1 * loss_sc
-        if hparams.f2 != 0:
-            loss_log_sc = self._loss_log_sc(bs_pred, bs_target) 
-            total_loss += hparams.f2 * loss_log_sc
-        if hparams.f3 != 0:
-            loss_freq = self._loss_freq(bs_pred, bs_target)
-            total_loss += hparams.f3 * loss_freq
-        if hparams.f4 != 0:
-            loss_weighted_phase = self._loss_weighted_phase(bs_pred, bs_target)
-            total_loss += hparams.f4 * loss_weighted_phase
         if hparams.f5 != 0:
             loss_l1 = self._loss_l1(pred, target)
             total_loss += hparams.f5 * loss_l1
@@ -91,15 +90,6 @@ class Trainer:
         if hparams.f1 != 0:
             loss_sc = self._loss_sc(bs_pred, bs_target)
             total_loss += hparams.f1 * loss_sc
-        if hparams.f2 != 0:
-            loss_log_sc = self._loss_log_sc(bs_pred, bs_target) 
-            total_loss += hparams.f2 * loss_log_sc
-        if hparams.f3 != 0:
-            loss_freq = self._loss_freq(bs_pred, bs_target)
-            total_loss += hparams.f3 * loss_freq
-        if hparams.f4 != 0:
-            loss_weighted_phase = self._loss_weighted_phase(bs_pred, bs_target)
-            total_loss += hparams.f4 * loss_weighted_phase
         if hparams.f5 != 0:
             loss_l1 = self._loss_l1(pred, target)
             total_loss += hparams.f5 * loss_l1
@@ -109,13 +99,6 @@ class Trainer:
                 self._loss_rel_MSE(pred, target)
 
         return loss
-
-    def _get_params(self):
-        params = []
-        params += self.model.parameters()
-        params += self.f
-        
-        return params
     
     def _loss_sc(self, bs_pred, bs_gt):
         """
@@ -141,89 +124,7 @@ class Trainer:
     # target - ground truth image, source - Bispectrum of ground truth image
     # might be multiple targets and sources (batch size > 1)
 
-    def _loss_log_sc(self, bs_pred, bs_gt, eps=1e-5):
-        """
-        
-
-        Parameters
-        ----------
-        pred : TYPE     torch complex-float, NXNX1
-            rec_s - reconstructed signal.
-        target : TYPE     torch complex-float, NXNX1
-            s - target signal (GT).
-
-        Returns
-        -------
-        TYPE    torch float
-            || log(|BS(s)| + epsilon) - log(|BS(rec_s)| + epsilon) ||_1
-
-        """
-        # Get magnitudes
-        bs_pred_mag = torch.abs(bs_pred)
-        bs_gt_mag = torch.abs(bs_gt)
-        return torch.norm(torch.log(bs_gt_mag + eps) - torch.log(bs_pred_mag + eps), p=1)
-    # target - ground truth image, source - Bispectrum of ground truth image
-    # might be multiple targets and sources (batch size > 1)
-
-    def _loss_freq(self, bs_pred, bs_gt):
-        """
-        
-
-        Parameters
-        ----------
-        pred : TYPE     torch complex-float, NXNX1
-            rec_s - reconstructed signal.
-        target : TYPE     torch complex-float, NXNX1
-            s - target signal (GT).
-
-        Returns
-        -------
-        TYPE    torch float
-            || d/dt(<BS(s)) - d/dt(<BS(rec_s)) ||_1
-
-        """
-        # Get phases
-        bs_pred_phase = torch.angle(bs_pred)
-        bs_gt_phase = torch.angle(bs_gt)
-        
-        #Get derivative phase
-        bs_pred_phase_deriv = bs_pred_phase[1:] - bs_pred_phase[:-1]
-        bs_gt_phase_deriv = bs_gt_phase[1:] - bs_gt_phase[:-1]
-        return torch.norm(bs_gt_phase_deriv - bs_pred_phase_deriv, p=1)
-    # target - ground truth image, source - Bispectrum of ground truth image
-    # might be multiple targets and sources (batch size > 1)
-
-
-    def _loss_weighted_phase(self, bs_pred, bs_gt):
-        """
-        
-    
-        Parameters
-        ----------
-        pred : TYPE     torch complex-float, NXNX1
-            rec_s - reconstructed signal.
-        target : TYPE     torch complex-float, NXNX1
-            s - target signal (GT).
-    
-        Returns
-        -------
-        TYPE    torch float
-            || |BS(s)| .* |BS(rec_s)| - Re{BS(s)} .* Re{BS(rec_s)} - Im{BS(s)} .* Im{BS(rec_s)} ||_1
-    
-        """
-        # Get magnitudes
-        bs_pred_mag = torch.abs(bs_pred)
-        bs_gt_mag = torch.abs(bs_gt)
-        # Get real
-        bs_pred_real = bs_pred.real
-        bs_gt_real = bs_gt.real
-        # Get imaginary
-        bs_pred_imag = bs_pred.imag
-        bs_gt_imag = bs_gt.imag
-        return torch.norm(bs_gt_mag * bs_pred_mag - bs_gt_real * bs_pred_real - bs_gt_imag * bs_pred_imag, p=1) / torch.norm(bs_gt_mag * bs_pred_mag, p=1)
-        # target - ground truth image, source - Bispectrum of ground truth image
-        # might be multiple targets and sources (batch size > 1)
-
+ 
     def _loss_rel_MSE(self, pred, target):
         """
         
@@ -243,8 +144,8 @@ class Trainer:
         """
 
         return torch.mean(
-            torch.norm(target - pred, dim=(-1, -2)) / 
-            torch.norm(target, dim=(-1, -2)))
+            torch.norm(pred - target, dim=(-1, -2))**2 / 
+            torch.norm(target, dim=(-1, -2)))**2
         # target - ground truth image, source - Bispectrum of ground truth image
         # might be multiple targets and sources (batch size > 1)
 
@@ -265,8 +166,8 @@ class Trainer:
         || s - rec_s ||_1 / len(s)
 
         """
-        loss = torch.nn.L1Loss()
-        return loss(pred, target)
+        criterion = torch.nn.L1Loss()
+        return criterion(pred, target)
     
         # target - ground truth image, source - Bispectrum of ground truth image
         # might be multiple targets and sources (batch size > 1)
@@ -288,8 +189,8 @@ class Trainer:
         || s - rec_s ||_1 / len(s)
 
         """
-        loss = torch.nn.MSELoss()
-        return loss(pred, target)
+        criterion = torch.nn.MSELoss()
+        return criterion(pred, target)
         
     def _run_batch(self, source, target):
         # Move data to device
@@ -299,12 +200,8 @@ class Trainer:
         # Forward pass
         output = self.model(source) # reconstructed signal
         if not self.is_training:
-        # if hparams.f5 > 0.:
              output, _ = self.aligner(output, target)
-        self.last_output = output
-        self.last_target = target
         # Loss calculation
-
         loss = self.loss_f(output, target)
 
         return loss
@@ -316,7 +213,7 @@ class Trainer:
             target = circulant(torch.roll(y, -1))
             target = target.unsqueeze(1)
         else:
-            target = torch.randn(self.batch_size, 1, self.target_len)
+            target = torch.randn(self.batch_size, self.signals_count, self.target_len)
         source, target = self.bs_calc(target)
         if self.mode[1] == 'shift':
             target, shifts = rand_shift_signal(target, 
@@ -328,12 +225,6 @@ class Trainer:
         source = source.to(self.device)
         # Forward pass
         output = self.model(source) # reconstructed signal
-        # if self.mode[1] == 'shift':# and not self.is_training:
-        # if hparams.f5 > 0.:
-        #     output, _ = self.aligner(output, target)
-        self.last_output = output
-        # if self.epoch % hparams.dbg_draw_rate == 0:
-        #     self.plot_output_debug(target, output)
         
         # Loss calculation
         loss = self.loss_f(output, target)
@@ -347,23 +238,24 @@ class Trainer:
       
         plt.figure()
         plt.title('Comparison between original signal and its reconstructions')
-        plt.plot(target, label='org')
-        plt.plot(output, label='tested')
+        plt.plot(output, label='tested', color='tab:orange')
         if from_matlab is not None:
-            plt.plot(from_matlab, label='baseline')
+            plt.plot(from_matlab, label='baseline', color='tab:green')
+        plt.plot(target, label='org', color='tab:blue')
         plt.ylabel('signal')
         plt.xlabel('time')
         plt.legend()
         plt.savefig(fig_path)        
         plt.close()
    
-    def _save_checkpoint(self, epoch):
-        ckp = self.model.state_dict()
-        folder = f'./checkpoints/cnn_{self.suffix}'
-        PATH = f"{folder}/checkpoint_ep{epoch}.pt"
-        if not os.path.exists(folder):
-            os.makedirs(folder)
-        torch.save(ckp, PATH)
+    def _save_checkpoint(self):
+        if not os.path.exists(self.folder_python):
+            os.makedirs(self.folder_python)
+        torch.save({'epoch': self.epoch,
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict()}, 
+            f'{self.folder_python}/ckp.pt')
         
     def _run_epoch_train(self):
         total_loss = 0
@@ -382,9 +274,23 @@ class Trainer:
             self.optimizer.step()
             # update avg loss 
             total_loss += loss.item()
-            
+            # scheduler step after batch
+            if self.scheduler_name != 'None':
+                if self.scheduler_name in ['OneCycleLR', 'CosineAnnealingLR', 'CyclicLR']:
+                    self.scheduler.step()
+                    
         avg_loss = total_loss / len(self.train_loader)
-        
+
+        # scheduler step after epoch
+        if self.scheduler_name != 'None':
+            if self.scheduler_name == 'Manual':
+                if self.epoch in hparams.manual_epochs_lr_change:
+                    self.optimizer.param_groups[0]['lr'] *= hparams.manual_lr_f 
+            elif self.scheduler_name == 'StepLR':
+                self.scheduler.step()
+            elif self.scheduler_name == 'ReduceLROnPlateau':
+                self.scheduler.step(avg_loss)
+                
         return avg_loss
 
     def _run_epoch_train_losses_all(self):   
@@ -409,11 +315,25 @@ class Trainer:
             total_loss += loss.item()
             total_mse_loss += mse_loss.item()
             total_mse_norm_loss += rel_mse_loss.item()
-            
+            # scheduler step after batch
+            if self.scheduler_name != 'None':
+                if self.scheduler_name in ['OneCycleLR', 'CosineAnnealingLR', 'CyclicLR']:
+                    self.scheduler.step()
+                    
         avg_loss = total_loss / len(self.train_loader)
         avg_mse_loss = total_mse_loss / len(self.train_loader) 
         avg_mse_norm_loss = total_mse_norm_loss / len(self.train_loader) 
 
+        # scheduler step after epoch
+        if self.scheduler_name != 'None':
+            if self.scheduler_name == 'Manual':
+                if self.epoch in hparams.manual_epochs_lr_change:
+                    self.optimizer.param_groups[0]['lr'] *= hparams.manual_lr_f 
+            elif self.scheduler_name == 'StepLR':
+                self.scheduler.step()
+            elif self.scheduler_name == 'ReduceLROnPlateau':
+                self.scheduler.step(avg_loss)
+                
         return avg_loss, avg_mse_loss, avg_mse_norm_loss        
 
     def _run_epoch_validate_losses_all(self):   
@@ -499,15 +419,17 @@ class Trainer:
             target = target.to(self.device)
             source = source.to(self.device)
             # Forward pass
-            output = self.model(source) # reconstructed signal
-            output, _ = self.aligner(output, target)
-            self.save_python_test_data(idx.item(), output, target)
+            pred = self.model(source) # reconstructed signal
+            pred, _ = self.aligner(pred, target)
+            self.save_python_test_data(idx.item(), pred, target)
             
     def save_python_test_data(self, i, x_est, x_true):
-        folder = os.path.join(self.folder_python, f'sample{i}')
+        folder = os.path.join(self.folder_python, f'sample{i+1}')
         if not os.path.exists(folder):
             os.mkdir(folder)
-            
+
+        #read from matlab
+        folder_m = os.path.join(self.folder_matlab, f'sample{i}')             
         rel_error_X = self._loss_rel_MSE(x_est, x_true).item()
         rel_error_X_path = os.path.join(folder, 'rel_error_X.csv')
         np.savetxt(rel_error_X_path, [rel_error_X])
@@ -532,7 +454,7 @@ class Trainer:
 
         
     def run(self):
-        for self.epoch in range(self.epochs):
+        for self.epoch in range(self.start_epoch + 1, self.epochs + 1):
             # train             
             train_loss = self.train()
             # validate
@@ -542,20 +464,12 @@ class Trainer:
                 train_loss, train_mse_loss, train_rel_mse_loss = train_loss
                 val_loss, val_mse_loss, val_rel_mse_loss = val_loss
             # update lr
-            
-            if self.scheduler_name != 'None':
-                last_lr = self.optimizer.param_groups[0]['lr']
-                if self.scheduler_name == 'Manual':
-                    if self.epoch in hparams.manual_epochs_lr_change:
-                        self.optimizer.param_groups[0]['lr'] *= hparams.manual_lr_f 
-                elif self.scheduler_name == 'ReduceLROnPlateau':
-                    self.scheduler.step(train_loss)
-                elif self.scheduler_name in ['StepLR', 'OneCycleLR', 'CosineAnnealingLR']:
-                    self.scheduler.step()
+            last_lr = self.optimizer.param_groups[0]['lr']
             # log loss with wandb
-            if self.wandb_flag and self.epoch % self.save_every == 0:
-                wandb.log({"train_loss_l1": train_loss})
-                wandb.log({"val_loss_l1": val_loss})
+            if self.wandb_flag and \
+                (self.epoch == 1 or self.epoch % self.save_every == 0):
+                wandb.log({"train_loss": train_loss})
+                wandb.log({"val_loss": val_loss})
                 wandb.log({"lr": self.optimizer.param_groups[0]['lr']})
                 if self.loss_mode == 'all':
                     wandb.log({"train mse": train_mse_loss})
@@ -563,7 +477,7 @@ class Trainer:
                     wandb.log({"val mse": val_mse_loss})
                     wandb.log({"val relative mse": val_rel_mse_loss})
             # save checkpoint and log loss to cmd 
-            if self.epoch % self.save_every == 0:
+            if self.epoch == 1 or self.epoch % self.save_every == 0:
                 print(f'-------Epoch {self.epoch}/{self.epochs}-------')
                 print(f'Total Train loss: {train_loss:.6f}')
                 print(f'Total Validation loss: {val_loss:.6f}')
@@ -575,44 +489,40 @@ class Trainer:
                 if self.scheduler_name != 'None':
                     print(f'lr: {last_lr}')
                 # save checkpoint
-                self._save_checkpoint(self.epoch)
-                    # if self.epoch >= 3000:
-                    #     hparams.f1 = 0.7
-                    #     hparams.f5 = 0.3
-            # plot last output
-            if self.epoch == self.epochs - 1:
-                folder = f'figures/cnn_{self.suffix}'
-                self.plot_output_debug(self.last_target[0].squeeze(0).detach().cpu().numpy(), 
-                                       self.last_output[0].squeeze(0).detach().cpu().numpy(),
-                                       folder)
+                self._save_checkpoint()
+            # plot outputs on last epoch
+            if self.epoch == self.epochs and self.plotting_off == False:
                 if self.read_baseline != 0:
                     if self.read_baseline == 1: # train
                         self.write_python_test_results(self.train_dataset)
                     elif self.read_baseline == 2:
                         self.write_python_test_results(self.val_dataset)
-                    # with open(hparams.py_x_rec_file, "w", newline="") as csvfile:
-                    #     # Create a CSV writer object
-                    #     writer = csv.writer(csvfile)
-                    
-                    #     # Write the data to the file
-                    #     writer.writerows(self.last_output[0])
             # stop early if early_stopping is on
-            if self.early_stopping != 0:
+            if self.early_stopping:
                 if self.last_loss < train_loss:
                     self.es_cnt +=1
-                    if self.es_cnt == self.early_stopping:
+                    if self.es_cnt == hparams.early_stopping:
                         print(f'Stooped at epoch {self.epoch}, after {self.es_cnt} times\n'
                               f'last_loss={self.last_loss}, curr_los={train_loss}')
                         folder = f'figures/cnn_{self.suffix}'
-                        self.plot_output_debug(self.last_target[0].squeeze(0).detach().cpu().numpy(),
-                                               self.last_output[0].squeeze(0).detach().cpu().numpy(), 
-                                               folder)
-                        return
+                        break
             # stop if loss has reached lower bound
             if train_loss < hparams.loss_lim:
+                print(f'-------Epoch {self.epoch}/{self.epochs}-------')
+                print(f'Total Train loss: {train_loss:.6f}')
+                print(f'Total Validation loss: {val_loss:.6f}')
+                if self.loss_mode == 'all':
+                    print(f'train mse loss: {train_mse_loss:.6f}')
+                    print(f'train relative mse loss: {train_rel_mse_loss:.6f}')
+                    print(f'val mse loss: {val_mse_loss:.6f}')
+                    print(f'val relative mse loss: {val_rel_mse_loss:.6f}')
+                if self.scheduler_name != 'None':
+                    print(f'lr: {last_lr}')
+    
                 print(f'Stooped at epoch {self.epoch},\n'
                       f'curr_los={train_loss} < {hparams.loss_lim}')    
                 self.last_loss = train_loss
+                break
         
         # test
         with torch.no_grad():
