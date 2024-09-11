@@ -40,11 +40,13 @@ args = parser.parse_args()
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # Set args
 baseline_data_folder = f'baseline_K_{args.K}_N_{args.N}'
-model_folder = 'test_K_2_N_20_average'
-test_folder = 'test_K_2_N_20_average111'
+model_folder = 'test_K_2_N_20_l1_alligned_loss_sum_15_samples'#'test_K_2_N_20_average'
+test_folder = 'test_K_2_N_20_l1_alligned_loss_sum_15_samples'#'test_K_2_N_20_average111'
 N = args.N
 K = args.K
 check_k1_k2_distance = False
+mode = 'opt'
+data_size=15
 # Set baeline data path
 baseline_data_path = os.path.join(os.path.join(hparams.data_root, 'baseline_data'),
                                   baseline_data_folder)
@@ -81,8 +83,8 @@ def plot_output_debug2(target, output, folder, from_matlab=None):
     plt.figure()
     plt.title('Comparison between original signal and its reconstructions')
     plt.plot(output, label='tested', color='tab:orange')
-    if from_matlab is not None:
-        plt.plot(from_matlab, label='baseline', color='tab:green')
+    # if from_matlab is not None:
+    #     plt.plot(from_matlab, label='baseline', color='tab:green')
     plt.plot(target, label='org', color='tab:blue')
     plt.ylabel('signal')
     plt.xlabel('time')
@@ -125,12 +127,15 @@ model.eval()
 model.to(device)
 
 # Get number of samples
-data_size = len(os.listdir(baseline_data_path))
+#len(os.listdir(baseline_data_path))
 bs_calc = BispectrumCalculator(K, N, device).to(device)
 aligner = BatchAligneToReference(device).to(device)
 
 # Create Dataset
-target = read_dataset_from_baseline(baseline_data_path, data_size, K, N)
+if mode == 'opt':
+    target = torch.randn(data_size, K, N)
+else:
+    target = read_dataset_from_baseline(baseline_data_path, data_size, K, N)
 source, target = bs_calc(target)
 source = source.to(device)
 target = target.to(device)
