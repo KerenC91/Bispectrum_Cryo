@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import math
+from hparams import hparams
 
 def read_csv_from_matlab(file):
     x = np.loadtxt(file, delimiter=" ")
@@ -51,7 +52,7 @@ def calculate_bispectrum_power_spectrum_efficient(x, dt=1.):
 
     return Bx, Px, f
    
-def clculate_bispectrum_efficient(x):
+def clculate_bispectrum_efficient(x, normalize=hparams.norm_bs):
     """
     
 
@@ -72,6 +73,11 @@ def clculate_bispectrum_efficient(x):
     C = circulant(torch.roll(y, -1))
     Bx = y.unsqueeze(1) @ y.conj().unsqueeze(0)
     Bx = Bx * C
+    
+    if normalize:
+        eps = 1e-8
+        Bx_factor = torch.pow(torch.abs(Bx), 2/3) + eps
+        Bx = Bx / Bx_factor
     return Bx
 
 

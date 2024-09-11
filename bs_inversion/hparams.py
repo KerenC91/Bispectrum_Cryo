@@ -20,34 +20,34 @@ hparams = HParams(
     #####################################
     DEBUG = False,
     debug_model = 3,
-    debug_N = 20,
+    debug_N = 100,
     debug_last_ch = 256,# 8 for 1, 2,
     debug_pre_conv_channels = [8, 32, 256], # [8, 32, 64, debug_last_ch]
     debug_pre_residuals = 11,
     debug_up_residuals = 3,
     debug_post_residuals = 14,
     debug_n_heads = 1,
-    debug_mode = ['rand', 'none'],
-    debug_batch_size = 5,
+    debug_mode = ['opt', 'none'],
+    debug_batch_size = 1,
     debug_loss_mode = 'all',
-    debug_train_data_size = 5,
-    debug_val_data_size = 100,
-    debug_epochs = 1,
+    debug_train_data_size = 1,
+    debug_val_data_size = 1,
+    debug_epochs = 10000,
     debug_channels_model1 = [256, 8],
     debug_channels_model2 = [256, 64],
     debug_channels_model3 = [256, 8], # [256, debug_last_ch]
     debug_scheduler = "OneCycleLR",
-    debug_read_baseline = 2,
-    debug_comp_test_name_m = 'baseline_K_2_N_20',
+    debug_read_baseline = 1,
+    debug_comp_test_name_m = 'baseline_K_2_N_100',
     debug_K = 2,
-    debug_loss_method = "average", #{"average", "sum"}
+    debug_loss_method = "sum", #{"average", "sum"}
     
     #####################################
     # loss config 
     #####################################
-    f1=1.,#_loss_sc
-    f2=0.,#_loss_log_sc
-    f3=0.,#_loss_freq
+    f1=0.,#_loss_sc
+    f2=0.,#_loss_l1_aligned
+    f3=1.,#_loss_mse
     f4=0.,#loss_weighted_phase
     f5=0.,#_loss_l1
     ##########################
@@ -61,12 +61,12 @@ hparams = HParams(
     reduce_lr_mode='min',
     reduce_lr_factor = 0.1,
     reduce_lr_threshold = 1e-3,
-    reduce_lr_patience = 10,
+    reduce_lr_patience = 0,
     reduce_lr_cooldown = 0,
 
     # StepLR - every step_size epochs decrease by lr gamma factor
-    step_lr_step_size = 100, 
-    step_lr_gamma = 0.01,
+    step_lr_step_size = 2000,#1000, 
+    step_lr_gamma = 0.94,
     
     # OneCycleLR - perform one cycle of learning. 
     # epochs and steps per epochs are defined in the code
@@ -100,9 +100,9 @@ hparams = HParams(
     opt_sgd_momentum = 0.,
     opt_sgd_weight_decay = 0.,
     # AdamW
-    opt_adam_w_betas=(0.891592775789722, 0.9166003229827805),
-    opt_adam_w_weight_decay=0.08730870077064574,
-    opt_adam_w_eps = 9.606529741408894e-07,
+    opt_adam_w_betas=(0.9, 0.999),
+    opt_adam_w_weight_decay=1e-2,
+    opt_adam_w_eps = 1e-8,
     # Adam
     opt_adam_betas=(0.9, 0.999),
     opt_adam_eps = 1e-8,
@@ -120,16 +120,16 @@ hparams = HParams(
                         # layer_channels list of values on each of heads
     channels_model1 = [256, 8],
     channels_model2 = [256, 64],
-    channels_model3 = [256, 8],
-    linear_ch = 256, # for model1: channels[-1], for model2: 8, 
-    pre_conv_channels = [8, 32, 256], 
+    channels_model3 = [32,8],#[256, 8],
+    linear_ch = 32,#256, # for model1: channels[-1], for model2: 8, 
+    pre_conv_channels = [8, 32],#[8, 32, 256], 
                         #layer_channels list of values on each of heads
     reduce_height = [4, 3, 3], # RELEVANT FOR MODEL2 ONLY
                     #relevant only for model2 - [count kernel stride]
                     #for reducing height in tensor: BXCXHXW to BXCX1XW
-    pre_residuals = 11, 
-    up_residuals = 3,    
-    post_residuals = 14,
+    pre_residuals = 9,#11, 
+    up_residuals = 8,#3,    
+    post_residuals = 2,#14,
     activation = 'LeakyReLU',
     ##########################
     # additional params
@@ -138,8 +138,10 @@ hparams = HParams(
     dbg_draw_rate=100,
     loss_lim = 1e-6,
     # comparison with baseline
-    data_root = '../data',
-    checkpoints_root = 'checkpoints'
+    data_root = '../../Bispectrum_Cryo/data',
+    checkpoints_root = 'checkpoints',
+    #Additional params
+    norm_bs = False,
 )
 
 def hparams_debug_string():
