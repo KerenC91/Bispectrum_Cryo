@@ -3,7 +3,6 @@ from torch import nn
 import numpy as np
 from model_utils import ResnetBlock, ConvBlock, MidLayer
 
-
 class HeadBS3(nn.Module):
     """HeadBS3 module - same as 2, without mid layer
 
@@ -154,7 +153,6 @@ class HeadBS3(nn.Module):
         #print(x.shape)
         #x = x.unsqueeze(0) # reshape to [B x 2 x 100 x 100]
         #print(x.shape)
-
         x = self.pre_conv(x)
         #x = self.dilated_conv(x)
         #print(x.shape)
@@ -166,11 +164,9 @@ class HeadBS3(nn.Module):
 
         #x = self.mid(x)
         #print(x.shape)
-        x *= self.f
-        
+        #x *= torch.sigmoid(self.f)
         x2 = self.post_conv(x)
         #print(x2.shape)
-        x2 *= self.f
-        
+        #x2 *= torch.sigmoid(self.f)
         return x2# pre, post
 
