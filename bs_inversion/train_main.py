@@ -19,6 +19,7 @@ from compare_to_baseline import read_tensor_from_matlab
 #torch.set_printoptions(precision=15)
 #torch.set_default_dtype(torch.float64)
 # Set the same seed for reproducibility
+
 #torch.manual_seed(234)
 
 
@@ -79,7 +80,7 @@ def read_dataset_from_baseline(folder_matlab, data_size, K, N):
     return target
    
 def create_dataset(device, data_size, K, N, read_baseline, mode, 
-                   folder_matlab):
+                   folder_matlab, normalize=True):
     bs_calc = BispectrumCalculator(K, N, device).to(device)
     print(f'read_baseline={read_baseline}, mode={mode}')
     if read_baseline: # in val dataset
@@ -91,6 +92,11 @@ def create_dataset(device, data_size, K, N, read_baseline, mode,
         elif mode[0] == 'rand':
             # Initialize dataset to zeros and create data on the fly 
             target = torch.zeros(data_size, K, N)
+    if normalize:
+        y = torch.fft.fft(target, dim=-1)
+        y /= torch.norm(y, dim=-1).unsqueeze(2)
+        target = torch.fft.ifft(y, dim=-1)
+        target = target.type(torch.float32)
     target.to(device)
     source, target = bs_calc(target)
     if mode[0] == 'opt' and mode[1] == 'shift' and not read_baseline:
@@ -371,7 +377,7 @@ def main(args):
 
     train_dataset = create_dataset(device, args.train_data_size, args.K, args.N,
                                    read_baseline_train, args.mode,
-                                   folder_matlab)
+                                   folder_matlab, args.normalize)
 
     train_loader = prepare_data_loader(train_dataset, args.batch_size)
     # Set validation dataset and dataloader 
@@ -380,7 +386,7 @@ def main(args):
 
     val_dataset = create_dataset(device, args.val_data_size, args.K, args.N,
                                  read_baseline_val, ['opt', 'none'],
-                                 folder_matlab)
+                                 folder_matlab, args.normalize)
     val_loader = prepare_data_loader(val_dataset, args.batch_size)
     
     scheduler = set_scheduler(args.scheduler, optimizer, args.epochs, len(train_loader))
@@ -542,7 +548,7 @@ if __name__ == "__main__":
     parser.add_argument('--clip_grad_norm', type=float, default=0.,  
                         help='If greater than 0: clip gradients norm with the clip_grad_norm value.') 
     parser.add_argument('--override', action='store_true', 
-                        help='overife run eventhough a checkpoint exists') 
+                        help='override existing run eventhough a checkpoint exists') 
     # Parse arguments
     args = parser.parse_args()
 

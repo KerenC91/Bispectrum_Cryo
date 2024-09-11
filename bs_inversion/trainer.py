@@ -326,6 +326,11 @@ class Trainer:
             target = target.unsqueeze(1)
         else:
             target = torch.randn(self.batch_size, self.signals_count, self.target_len)
+        if self.normalize:
+            y = torch.fft.fft(target, dim=-1)
+            y /= torch.norm(y, dim=-1).unsqueeze(2)
+            target = torch.fft.ifft(y, dim=-1) 
+            target = target.type(torch.float32)
         source, target = self.bs_calc(target)
 
         if self.mode[1] == 'shift':
