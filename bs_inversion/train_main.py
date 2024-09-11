@@ -16,11 +16,10 @@ import sys
 from torch import nn
 from compare_to_baseline import read_tensor_from_matlab
 
-
 #torch.set_printoptions(precision=15)
 #torch.set_default_dtype(torch.float64)
 # Set the same seed for reproducibility
-#torch.manual_seed(1234)
+#torch.manual_seed(234)
 
 
                 
@@ -166,7 +165,6 @@ def get_model(device, args):
         head_class = HeadBS1
         channels = hparams.channels_model1
  
-
     hparams.pre_conv_channels[-1] = hparams.last_ch
     channels[-1] = hparams.last_ch
     cnt, k, s = hparams.reduce_height
@@ -190,6 +188,7 @@ def get_model(device, args):
         activation=activation
         )
     return model
+
 
 def set_debug_args(args):
     args.N = hparams.debug_N				
@@ -364,7 +363,7 @@ def main(args):
     optimizer = set_optimizer(args, model)
     # print and save model
     if args.log_level >= 2:
-    	print_model_summary(args, model)
+    	print(model)
 
     # Set train dataset and dataloader
     print('Set train data')
@@ -389,19 +388,24 @@ def main(args):
     ckp_path = os.path.join(f'{folder_python}', 'ckp.pt')
 
     if os.path.exists(ckp_path):
-        print('checkpoint found, loading...')
-        checkpoint = torch.load(ckp_path)
-        epoch = checkpoint['epoch']
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model = model.to(device)
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        if args.scheduler_from_start: 
-            scheduler = set_scheduler(args.scheduler, optimizer, args.epochs - epoch, len(train_loader))
+        print('checkpoint found')
+        if args.override:
+           epoch = 0 
+           print('override existing checkpoint')
         else:
-            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-        if epoch >= args.epochs:
-            print(f'Error! epoch={epoch} must be smaller then args.epochs={args.epochs}')
-            exit(1)
+            print('loading checkpoint...')
+            checkpoint = torch.load(ckp_path)
+            epoch = checkpoint['epoch']
+            model.load_state_dict(checkpoint['model_state_dict'])
+            model = model.to(device)
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            if args.scheduler_from_start: 
+                scheduler = set_scheduler(args.scheduler, optimizer, args.epochs - epoch, len(train_loader))
+            else:
+                scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            if epoch >= args.epochs:
+                print(f'Error! epoch={epoch} must be smaller then args.epochs={args.epochs}')
+                exit(1)
     else:
         epoch = 0
     # Initialize trainer
@@ -477,6 +481,8 @@ if __name__ == "__main__":
                         ' Else, resume scheduler from checkpoint.') 
     parser.add_argument('--lr', type=float, default=1e-2, metavar='f',
             help='learning rate (initial for dynamic lr, otherwise fixed)')  
+    parser.add_argument('--eps', type=float, default=0, metavar='f',
+            help='epsilon value to add to loss for avoiding Nans and infinite values')     
     parser.add_argument('--mode', type=str, nargs='+', default=['opt'],
             help= '[mode, add], mode in {\'rand\'\,\'opt\'}, add (optioanl) in {\'shift\', \'circular_shifts\'}'
                 '\'rand\': Create random data during training.\n'
@@ -533,8 +539,10 @@ if __name__ == "__main__":
     parser.add_argument('--optimizer', type=str, default="AdamW",  
                         help='The options are \"Adam\"\, \"SGD\"\, \"RMSprop\"\, \"AdamW\"\n'
                         'Please update relevant parameters in parameters file.') 
-    
-
+    parser.add_argument('--clip_grad_norm', type=float, default=0.,  
+                        help='If greater than 0: clip gradients norm with the clip_grad_norm value.') 
+    parser.add_argument('--override', action='store_true', 
+                        help='overife run eventhough a checkpoint exists') 
     # Parse arguments
     args = parser.parse_args()
 
