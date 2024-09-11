@@ -70,7 +70,10 @@ class Trainer:
         self.is_training = True
         self.loss_method = args.loss_method
         self.plotting_off = args.plotting_off
-    
+        self.eps = args.eps#1e-8
+        self.clip = args.clip_grad_norm
+        
+        
     def _loss(self, pred, target):
         bs_pred, _ = self.bs_calc(pred)
         bs_target, _ = self.bs_calc(target)
@@ -79,18 +82,28 @@ class Trainer:
         if hparams.f1 != 0:
             loss_sc = self._loss_sc(bs_pred, bs_target)
             total_loss += hparams.f1 * loss_sc
+        if hparams.f2 != 0:
+            loss_l1_aligned = self._loss_l1(pred, target)
+            total_loss += hparams.f2 * loss_l1_aligned  
+        if hparams.f3 != 0:
+            loss_mse_aligned = self._loss_MSE(pred, target)
+            total_loss += hparams.f2 * loss_mse_aligned
         if hparams.f5 != 0:
             loss_l1 = self._loss_l1(pred, target)
             total_loss += hparams.f5 * loss_l1
 
         return total_loss
-
+    
     def _switch_position(self, pred, target):
         switch = False
-        
-        bs_pred, pred = self.bs_calc(pred, "sum")
-        bs_target, target = self.bs_calc(target, "sum")
-        _, switch = self._switch_criterion(bs_pred, bs_target)
+        if hparams.f1 != 0: #loss_sc
+            bs_pred, pred = self.bs_calc(pred, "sum")
+            bs_target, target = self.bs_calc(target, "sum")
+            _, switch = self._switch_criterion(bs_pred, bs_target)
+        if hparams.f2 != 0: #loss_l1_aligned
+            _, switch = self._switch_criterion_l1_aligned(pred, target)
+        if hparams.f3 != 0: #loss_l1_mse
+            _, switch = self._switch_criterion_mse_aligned(pred, target)
         if switch:
             pred = torch.flip(pred, dims=(-2,))
         
@@ -104,8 +117,14 @@ class Trainer:
         if hparams.f1 != 0:
             loss_sc = self._loss_sc(bs_pred, bs_target, self.loss_method)
             total_loss += hparams.f1 * loss_sc
+        if hparams.f2 != 0:
+            loss_l1_aligned = self._loss_l1(pred, target)
+            total_loss += hparams.f2 * loss_l1_aligned 
+        if hparams.f3 != 0:
+            loss_mse_aligned = self._loss_MSE(pred, target)
+            total_loss += hparams.f3 * loss_mse_aligned
         if hparams.f5 != 0:
-            loss_l1 = self._loss_l1(pred, target, self.loss_method)
+            loss_l1 = self._loss_l1(pred, target)
             total_loss += hparams.f5 * loss_l1
 
         loss = total_loss, \
@@ -134,11 +153,26 @@ class Trainer:
         if method == "sum":
             sh = bs_pred.shape
             loss = torch.mean(
-                        torch.norm((bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2)) / \
-                            torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2)))
+                        torch.norm((bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2))**2/ \
+                            torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2))**2) + self.eps
+            # if self.wandb_flag and \
+            #     (self.epoch == 1 or self.epoch % self.save_every == 0):
+            #     if (self.is_training):
+            #         wandb.log({"bs_pred_minus_bs_gt_norm_avg": torch.mean(torch.norm((bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2)))})
+            #         wandb.log({"bs_gt_norm_avg": torch.mean(torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2)))})
         else:
-            loss = torch.norm(bs_pred - bs_gt) / torch.norm(bs_gt)
-
+            loss = torch.norm(bs_pred - bs_gt)**2 / torch.norm(bs_gt)**2 + self.eps
+        #     if self.wandb_flag and \
+        #         (self.epoch == 1 or self.epoch % self.save_every == 0):
+        #         if (self.is_training):
+        #             wandb.log({"bs_pred_minus_bs_gt_norm": torch.norm(bs_pred - bs_gt)})
+        #             wandb.log({"bs_gt_norm": torch.norm(bs_gt)})
+                               
+        # if self.wandb_flag and \
+        #     (self.epoch == 1 or self.epoch % self.save_every == 0):
+        #     if (self.is_training):
+        #         wandb.log({"bs_pred": torch.norm(bs_pred)})
+        #         wandb.log({"bs_gt": torch.norm(bs_gt)})
         return loss
     
     def _switch_criterion(self, bs_pred, bs_gt):
@@ -146,11 +180,45 @@ class Trainer:
         sh = bs_pred.shape
         reversed_bs_pred = torch.flip(bs_pred, dims=(1,))
         loss1 = torch.mean(
-                    torch.norm((bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2)) / \
-                        torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2)))
+                    torch.norm((bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2))**2 / \
+                        torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2)))**2
         loss2 = torch.mean(
-                    torch.norm((reversed_bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2)) / \
-                        torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2)))
+                    torch.norm((reversed_bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2))**2 / \
+                        torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2)))**2
+        # get the index for the minimal loss
+        i = np.argmin(np.array([loss1.item(), loss2.item()]))
+        # get the minimal loss
+        loss = torch.min(loss1, loss2)
+        switch = (i != 0)
+        
+        return loss, switch
+    
+    def _switch_criterion_l1_aligned(self, pred, target):
+        # for sum method only
+        sh = pred.shape
+        reversed_pred = torch.flip(pred, dims=(1,))
+        
+        pred, _ = self.aligner(pred, target)
+        loss1 = self._loss_l1(pred, target)
+        reversed_pred, _ = self.aligner(reversed_pred, target)
+        loss2 = self._loss_l1(reversed_pred, target)
+        # get the index for the minimal loss
+        i = np.argmin(np.array([loss1.item(), loss2.item()]))
+        # get the minimal loss
+        loss = torch.min(loss1, loss2)
+        switch = (i != 0)
+        
+        return loss, switch
+
+    def _switch_criterion_mse_aligned(self, pred, target):
+        # for sum method only
+        sh = pred.shape
+        reversed_pred = torch.flip(pred, dims=(1,))
+        
+        pred, _ = self.aligner(pred, target)
+        loss1 = self._loss_MSE(pred, target)
+        reversed_pred, _ = self.aligner(reversed_pred, target)
+        loss2 = self._loss_MSE(reversed_pred, target)
         # get the index for the minimal loss
         i = np.argmin(np.array([loss1.item(), loss2.item()]))
         # get the minimal loss
@@ -180,7 +248,7 @@ class Trainer:
         """
         return torch.mean(
                     torch.norm(pred - target, dim=(0, 2))**2 / \
-                    torch.norm(target, dim=(0, 2))**2)
+                    torch.norm(target, dim=(0, 2))**2) + self.eps
 
     def _loss_l1(self, pred, target):
         """
@@ -223,6 +291,11 @@ class Trainer:
         || s - rec_s ||_1 / len(s)
 
         """    
+        # if self.wandb_flag and \
+        #     (self.epoch == 1 or self.epoch % self.save_every == 0):
+        #     if (self.is_training):
+        #         wandb.log({"pred": torch.norm(pred)})
+        #         wandb.log({"gt": torch.norm(target)})
         criterion = torch.nn.MSELoss()  
         
         return criterion(pred, target)
@@ -234,8 +307,8 @@ class Trainer:
 
         # Forward pass
         output = self.model(source) # reconstructed signal
-        if (not self.is_training) or (self.is_training and self.loss_method == 'sum'):
-            output = self._switch_position(output, target)
+        #if (not self.is_training) or (self.is_training and self.loss_method == 'sum'):
+        output = self._switch_position(output, target)
         if not self.is_training:
             output, _ = self.aligner(output, target)
              
@@ -265,8 +338,8 @@ class Trainer:
         source = source.to(self.device)
         # Forward pass
         output = self.model(source) # reconstructed signal
-        if self.loss_method == 'sum':
-            output = self._switch_position(output, target)
+        #if self.loss_method == 'sum':
+        output = self._switch_position(output, target)
         
         # Loss calculation
         loss = self.loss_f(output, target)
@@ -311,6 +384,9 @@ class Trainer:
                 loss = self._run_batch_rand()
             # backward pass
             loss.backward()
+            # clip gradients
+            if self.clip:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip)
             # optimizer step
             self.optimizer.step()
             # update avg loss 
@@ -350,6 +426,9 @@ class Trainer:
                 loss, mse_loss, rel_mse_loss = self._run_batch_rand()
             # backward pass
             loss.backward()
+            # clip gradients
+            if self.clip:    
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip)
             # optimizer step
             self.optimizer.step()
             torch.cuda.empty_cache()
@@ -554,7 +633,7 @@ class Trainer:
                         folder = f'figures/cnn_{self.suffix}'
                         break
             # stop if loss has reached lower bound
-            if train_loss < hparams.loss_lim:
+            if self.loss_mode == 'all' and train_mse_loss < hparams.loss_lim:
                 print(f'-------Epoch {self.epoch}/{self.epochs}-------')
                 print(f'Total Train loss: {train_loss:.6f}')
                 print(f'Total Validation loss: {val_loss:.6f}')
