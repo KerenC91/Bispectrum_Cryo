@@ -15,12 +15,12 @@ from trainer import Trainer
 import sys
 from torch import nn
 from compare_to_baseline import read_tensor_from_matlab
-
+import random 
 #torch.set_printoptions(precision=15)
 #torch.set_default_dtype(torch.float64)
 # Set the same seed for reproducibility
 
-#torch.manual_seed(234)
+torch.manual_seed(234)
 
 
                 
@@ -65,7 +65,7 @@ def set_read_func(folder_matlab):
         f = read_org
     return f
 
-def read_dataset_from_baseline(folder_matlab, data_size, K, N):
+def read_dataset_from_baseline(folder_matlab, data_size, K, N, label='x_true'):
     read_func = set_read_func(folder_matlab)
     data_size = min(data_size, len(os.listdir(folder_matlab)))
     target = torch.zeros(data_size, K, N)
@@ -75,7 +75,7 @@ def read_dataset_from_baseline(folder_matlab, data_size, K, N):
     for i in range(data_size):
         folder = os.path.join(folder_matlab, f'sample{i}')
         for j in range(K):
-            target[i][j] = read_func(folder, j, K)   
+            target[i][j] = read_func(folder, j, K, label)   
     
     return target
    
@@ -251,9 +251,25 @@ def init(args):
     folder_python = os.path.join(os.path.join(hparams.data_root, 'tests'), 
                                args.comp_test_name)
     if not os.path.exists(folder_python):
-        os.mkdir(folder_python)
+        if args.run_mode == "resume" or args.run_mode == "override":
+            print(f'Error! folder {folder_python} does not exist')
+            sys.exit(1)
+        else:#"new"
+            os.mkdir(folder_python)
     else:
         print(f'run {args.comp_test_name} already exists')
+        if args.run_mode == "new":
+            name_updated = False
+            for trial in range(5):
+                random_number = random.randint(0, 20)
+                if not os.path.exists(f'{folder_python}_{random_number}'):
+                    folder_python += f"_{random_number}"
+                    print(f'run name has been updated to {folder_python}')
+                    name_updated = True
+                    break
+            if name_updated == False:
+                print(f'Error! Could not update run name {folder_python}')
+                sys.exit(1)
     if args.read_baseline:
         # Set folder to read baseline data from
         folder_matlab = os.path.join(os.path.join(hparams.data_root, 'baseline_data'), 
@@ -261,7 +277,7 @@ def init(args):
         if not os.path.exists(folder_matlab):
             print('Error! folder_matlab does not exist\n'
                   f'path={folder_matlab}')    
-            exit(1)
+            sys.exit(1)
     else:
         folder_matlab = ''
         
@@ -395,10 +411,10 @@ def main(args):
 
     if os.path.exists(ckp_path):
         print('checkpoint found')
-        if args.override:
+        if args.run_mode == "override":
            epoch = 0 
            print('override existing checkpoint')
-        else:
+        elif args.run_mode == "resume":
             print('loading checkpoint...')
             checkpoint = torch.load(ckp_path)
             epoch = checkpoint['epoch']
@@ -411,8 +427,8 @@ def main(args):
                 scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
             if epoch >= args.epochs:
                 print(f'Error! epoch={epoch} must be smaller then args.epochs={args.epochs}')
-                exit(1)
-    else:
+                sys.exit(1)
+    else:#new
         epoch = 0
     # Initialize trainer
     trainer = Trainer(model=model, 
@@ -547,8 +563,9 @@ if __name__ == "__main__":
                         'Please update relevant parameters in parameters file.') 
     parser.add_argument('--clip_grad_norm', type=float, default=0.,  
                         help='If greater than 0: clip gradients norm with the clip_grad_norm value.') 
-    parser.add_argument('--override', action='store_true', 
-                        help='override existing run eventhough a checkpoint exists') 
+    parser.add_argument('--run_mode', type=str, default="new", 
+                        help='one out of \"override\", \"resume\", \"new\" existing run '
+                        'eventhough a checkpoint exists') 
     # Parse arguments
     args = parser.parse_args()
 

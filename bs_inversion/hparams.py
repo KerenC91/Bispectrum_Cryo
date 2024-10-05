@@ -46,10 +46,8 @@ hparams = HParams(
     # loss config 
     #####################################
     f1=0.,#_loss_sc
-    f2=0.,#_loss_l1_aligned
-    f3=1.,#_loss_mse
-    f4=0.,#loss_weighted_phase
-    f5=0.,#_loss_l1
+    f2=1.,#_loss_l1_aligned
+    f3=1.,#_loss_mse_aligned
     ##########################
     # scheduler config
     ##########################

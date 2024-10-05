@@ -75,11 +75,11 @@ class Trainer:
         
         
     def _loss(self, pred, target):
-        bs_pred, _ = self.bs_calc(pred)
-        bs_target, _ = self.bs_calc(target)
         total_loss = 0.
 
         if hparams.f1 != 0:
+            bs_pred, _ = self.bs_calc(pred)
+            bs_target, _ = self.bs_calc(target)
             loss_sc = self._loss_sc(bs_pred, bs_target)
             total_loss += hparams.f1 * loss_sc
         if hparams.f2 != 0:
@@ -87,10 +87,7 @@ class Trainer:
             total_loss += hparams.f2 * loss_l1_aligned  
         if hparams.f3 != 0:
             loss_mse_aligned = self._loss_MSE(pred, target)
-            total_loss += hparams.f2 * loss_mse_aligned
-        if hparams.f5 != 0:
-            loss_l1 = self._loss_l1(pred, target)
-            total_loss += hparams.f5 * loss_l1
+            total_loss += hparams.f3 * loss_mse_aligned
 
         return total_loss
     
@@ -109,12 +106,12 @@ class Trainer:
         
         return pred
     
-    def _loss_all(self, pred, target):
-        bs_pred, pred = self.bs_calc(pred, self.loss_method)
-        bs_target, target = self.bs_calc(target, self.loss_method)            
+    def _loss_all(self, pred, target):          
         total_loss = 0.
         
         if hparams.f1 != 0:
+            bs_pred, pred = self.bs_calc(pred, self.loss_method)
+            bs_target, target = self.bs_calc(target, self.loss_method)  
             loss_sc = self._loss_sc(bs_pred, bs_target, self.loss_method)
             total_loss += hparams.f1 * loss_sc
         if hparams.f2 != 0:
@@ -123,9 +120,6 @@ class Trainer:
         if hparams.f3 != 0:
             loss_mse_aligned = self._loss_MSE(pred, target)
             total_loss += hparams.f3 * loss_mse_aligned
-        if hparams.f5 != 0:
-            loss_l1 = self._loss_l1(pred, target)
-            total_loss += hparams.f5 * loss_l1
 
         loss = total_loss, \
                 self._loss_MSE(pred, target), \
@@ -309,8 +303,8 @@ class Trainer:
         output = self.model(source) # reconstructed signal
         #if (not self.is_training) or (self.is_training and self.loss_method == 'sum'):
         output = self._switch_position(output, target)
-        if not self.is_training:
-            output, _ = self.aligner(output, target)
+        # if not self.is_training:
+        #     output, _ = self.aligner(output, target)
              
         # Loss calculation
 
