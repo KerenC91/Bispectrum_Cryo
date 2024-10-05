@@ -12,7 +12,7 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 import argparse
 from utils import clculate_bispectrum_efficient, align_to_reference, BatchAligneToReference, BispectrumCalculator
-from train_main import get_model, read_org, read_dataset_from_baseline, UnitVecDataset
+from train_main import get_model, read_org, read_dataset_from_baseline, UnitVecDataset, create_dataset
 from compare_to_baseline import read_tensor_from_matlab
 from hparams import hparams
 from torch.utils.data import Dataset, DataLoader
@@ -40,13 +40,21 @@ args = parser.parse_args()
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # Set args
 baseline_data_folder = f'baseline_K_{args.K}_N_{args.N}'
-model_folder = 'test_K_2_N_20_l1_alligned_loss_sum_15_samples'#'test_K_2_N_20_average'
-test_folder = 'test_K_2_N_20_l1_alligned_loss_sum_15_samples'#'test_K_2_N_20_average111'
+model_folder = 'test_K_2_N_20_l1_alligned_loss_sum_rand'
+test_folder = model_folder
 N = args.N
 K = args.K
 check_k1_k2_distance = False
-mode = 'opt'
-data_size=15
+mode = 'rand'
+data_size=100
+normalize=True
+f1 = 0  #loss_sc
+f2 = 1. #loss_l1_aligned
+f3 = 0. #loss_l1_mse
+read_baseline = True
+if mode == 'opt':
+    read_baseline = False
+
 # Set baeline data path
 baseline_data_path = os.path.join(os.path.join(hparams.data_root, 'baseline_data'),
                                   baseline_data_folder)
@@ -63,7 +71,9 @@ if not os.path.exists(output_path):
 if not os.path.exists(baseline_data_path):
     print(f'error, baseline_data_path does not exist: {baseline_data_path}')
     exit(1)
-    
+
+bs_calc = BispectrumCalculator(K, N, device).to(device)
+aligner = BatchAligneToReference(device).to(device)
     
 def read_org(folder, k, K, label='x_true'):
     if K > 1:
@@ -91,18 +101,7 @@ def plot_output_debug2(target, output, folder, from_matlab=None):
     plt.legend()
     plt.savefig(fig_path)        
     plt.close()
-    
-def switch_position(pred, target, bs_calc):
-    switch = False
-    
-    bs_pred, pred = bs_calc(pred, "sum")
-    bs_target, target = bs_calc(target, "sum")
-    _, switch = switch_criterion(bs_pred, bs_target)
-    if switch:
-        pred = torch.flip(pred, dims=(-2,))
-    
-    return pred  
-      
+         
 def switch_criterion(bs_pred, bs_gt):
     sh = bs_pred.shape
     reversed_bs_pred = torch.flip(bs_pred, dims=(1,))
@@ -119,7 +118,58 @@ def switch_criterion(bs_pred, bs_gt):
     switch = (i != 0)
     
     return loss, switch  
-  
+
+def switch_criterion_l1_aligned(pred, target):
+    criterion = torch.nn.L1Loss()  
+    # for sum method only
+    sh = pred.shape
+    reversed_pred = torch.flip(pred, dims=(1,))
+    
+    pred, _ = aligner(pred, target)
+    loss1 = criterion(pred, target)
+    reversed_pred, _ = aligner(reversed_pred, target)
+    loss2 = criterion(reversed_pred, target)
+    # get the index for the minimal loss
+    i = np.argmin(np.array([loss1.item(), loss2.item()]))
+    # get the minimal loss
+    loss = torch.min(loss1, loss2)
+    switch = (i != 0)
+    
+    return loss, switch
+
+def switch_criterion_mse_aligned(pred, target):
+    criterion = torch.nn.MSELoss()  
+    # for sum method only
+    sh = pred.shape
+    reversed_pred = torch.flip(pred, dims=(1,))
+    
+    pred, _ = aligner(pred, target)
+    loss1 = criterion(pred, target)
+    reversed_pred, _ = aligner(reversed_pred, target)
+    loss2 = criterion(reversed_pred, target)
+    # get the index for the minimal loss
+    i = np.argmin(np.array([loss1.item(), loss2.item()]))
+    # get the minimal loss
+    loss = torch.min(loss1, loss2)
+    switch = (i != 0)
+    
+    return loss, switch
+
+def switch_position(pred, target):
+    switch = False
+    if f1 != 0: #loss_sc
+        bs_pred, pred = bs_calc(pred, "sum")
+        bs_target, target = bs_calc(target, "sum")
+        _, switch = switch_criterion(bs_pred, bs_target)
+    if f2 != 0: #loss_l1_aligned
+        _, switch = switch_criterion_l1_aligned(pred, target)
+    if f3 != 0: #loss_l1_mse
+        _, switch = switch_criterion_mse_aligned(pred, target)
+    if switch:
+        pred = torch.flip(pred, dims=(-2,))
+    
+    return pred
+
 # Load the model
 model = get_model(device, args)
 model.load_state_dict(torch.load(model_path)['model_state_dict'])
@@ -128,39 +178,43 @@ model.to(device)
 
 # Get number of samples
 #len(os.listdir(baseline_data_path))
-bs_calc = BispectrumCalculator(K, N, device).to(device)
-aligner = BatchAligneToReference(device).to(device)
 
 # Create Dataset
-if mode == 'opt':
-    target = torch.randn(data_size, K, N)
-else:
-    target = read_dataset_from_baseline(baseline_data_path, data_size, K, N)
-source, target = bs_calc(target)
-source = source.to(device)
-target = target.to(device)
-dataset = UnitVecDataset(source, target)
+dataset = create_dataset(device, 
+                         data_size, 
+                         K, 
+                         N, 
+                         read_baseline, 
+                         mode, 
+                         baseline_data_path, 
+                         normalize)
 dataloader = DataLoader(
     dataset=dataset,
     batch_size=1,
     pin_memory=False,
     shuffle=False
 )
-# Read baseline data from files
-baseline = torch.zeros(data_size, K, N)
-for i in range(data_size):
-    folder = os.path.join(baseline_data_path, f'sample{i}')
-    for j in range(K):
-        baseline[i][j] = read_org(folder, j, K, f"x_est") 
-
+# Set baseline data
+baseline = read_dataset_from_baseline(baseline_data_path, 
+                                      data_size, 
+                                      K, 
+                                      N, 
+                                      'x_est')
+if normalize:
+    y = torch.fft.fft(baseline, dim=-1)
+    y /= torch.norm(y, dim=-1).unsqueeze(2)
+    baseline = torch.fft.ifft(y, dim=-1)
+    baseline = baseline.type(torch.float32)
+        
+# loop over signals
 avg_err = 0.
 avg_min_err_between_signals = 0.
 for idx, (source, target) in dataloader:
     i = idx.item()
+    # Set output folder
     folder_write = os.path.join(output_path, f'sample{i}')
     if not os.path.exists(folder_write):
         os.mkdir(folder_write)
-    folder_read = os.path.join(baseline_data_path, f'sample{i}')
     
     source = source.to(device)
     target = target.to(device)
@@ -175,7 +229,7 @@ for idx, (source, target) in dataloader:
         min_err_between_signals = torch.norm(output.squeeze(0)[0] - output.squeeze(0)[1]) / \
                                                 torch.norm(output.squeeze(0)[0])
         # Option 2 - switch
-        output = switch_position(output, target, bs_calc)
+        output = switch_position(output, target)
         output, _ = aligner(output, target)
         
         min_err_between_signals = min(min_err_between_signals, 
@@ -184,13 +238,13 @@ for idx, (source, target) in dataloader:
         print(f'min_err_between_signals={min_err_between_signals}')
         avg_min_err_between_signals += min_err_between_signals
     else:
-        output = switch_position(output, target, bs_calc)
-        output, _ = aligner(output, target)
+        output = switch_position(output, target)
+#        output, _ = aligner(output, target)
 
 
     rel_error_X_path = os.path.join(folder_write, 'rel_error_X.csv')
 
-    if K ==2 and check_k1_k2_distance:
+    if K == 2 and check_k1_k2_distance:
         # Align output 1 to output 0 --> output 1 aligned
         output_1_aligned, _ = align_to_reference(output.squeeze(0)[1], 
                                         output.squeeze(0)[0])
