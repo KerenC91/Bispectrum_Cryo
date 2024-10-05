@@ -27,10 +27,13 @@ from train_main import set_activation, update_reduce_height_cnt, create_dataset,
 torch.manual_seed(1234)
 # Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# Set helpers
+
+# Set additionals
 bs_calc = BispectrumCalculator(optuna_params.K, optuna_params.N, device).to(device)
 aligner = BatchAligneToReference(device).to(device)
-                
+wandb.login()
+
+              
 
 class UnitVecDataset(Dataset):
     
@@ -52,8 +55,8 @@ def loss_sc(bs_pred, bs_gt, method="average"):
      if method == "sum":
          sh = bs_pred.shape
          loss = torch.mean(
-                     torch.norm((bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2)) / \
-                         torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2)))
+                     torch.norm((bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2))**2 / \
+                         torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2))**2)
      else:
          loss = torch.norm(bs_pred - bs_gt) / torch.norm(bs_gt)
 
@@ -84,7 +87,8 @@ def loss_all(pred, target):
 
     loss = loss, \
             loss_MSE(pred, target), \
-            loss_rel_MSE(pred, target)
+            loss_rel_MSE(pred, target), \
+            loss_l1(pred, target)
 
     return loss
     
@@ -95,13 +99,13 @@ def try_model(trial, device):
     pre_residuals = trial.suggest_int("pre_residuals", 0, 14)
     up_residuals = trial.suggest_int("up_residuals", 0, 14)   
     post_residuals = trial.suggest_int("post_residuals", 0, 14)
-    n_heads = trial.suggest_int("n_heads", 1, 5)
+    n_heads = trial.suggest_int("n_heads", 1, 2)
     activation_name = trial.suggest_categorical('activation', 
                                            ['ELU',
-                                            'LeakyReLU',
-                                            'ReLU',
-                                            'Softsign',
-                                            'Tanh'])
+                                           'LeakyReLU',
+                                           'ReLU',
+                                           'Softsign',
+                                           'Tanh'])
    
       
     
@@ -116,15 +120,39 @@ def try_model(trial, device):
         channels = optuna_params.channels_model1
     
     activation = set_activation(activation_name) 
-        
-    # last_ch_power = trial.suggest_int("last_ch_power", 5, 10)
-    # last_ch = int(2**last_ch_power)
-    # optuna_params.last_ch = last_ch
-    optuna_params.pre_conv_channels[-1] = optuna_params.last_ch
-    channels[-1] = optuna_params.last_ch
+    
+    # Set CNN channels    
+    # pre_conv : 2 --> 
+    # set number of layers
+    n_pre_conv = trial.suggest_int("n_pre_conv", 2, 5)
+    # Initialize channels
+    channels = [None] * n_pre_conv
+    # set channel0
+    pre_conv_ch0_power = trial.suggest_categorical("pre_conv_ch0_power", [3, 4, 5, 6])
+    channels[0] = int(2**pre_conv_ch0_power)
+    cha_str = f"{channels[0]}_"
+    # set last channel
+    last_ch_power = trial.suggest_int("last_ch_power", pre_conv_ch0_power + n_pre_conv - 1, 
+                                      min(pre_conv_ch0_power + n_pre_conv - 1 + 5, 10))
+    last_ch = int(2**last_ch_power)
+    channels[-1] = last_ch
+    
+    optuna_params.last_ch = last_ch
+    
+    # Set all channels
+    prev_power = last_ch_power
+    for n in range(n_pre_conv - 2, 0, -1):
+        power = max(last_ch_power - (n_pre_conv - n - 1), pre_conv_ch0_power)
+        if power != prev_power:
+            channels[n] = int(2**power)
+            cha_str += f"{channels[n + 1]}_"
+        prev_power = power
+    cha_str += f"{channels[-1]}"
+    optuna_params.pre_conv_channels[-1] = last_ch
     cnt, k, s = optuna_params.reduce_height
     reduce_height = update_reduce_height_cnt(k, s, optuna_params.N)
     
+    model_params_str = f"Model_n_heads_{n_heads}_act_{activation_name}_pre_r_{pre_residuals}_up_r_{up_residuals}_post_r_{post_residuals}_cha_{cha_str}"
     model = CNNBS(
         device=device,
         input_len=optuna_params.N,
@@ -142,7 +170,7 @@ def try_model(trial, device):
         linear_ch=optuna_params.last_ch,
         activation=activation
         )
-    return model
+    return model, model_params_str
      
 
 def try_scheduler(trial, scheduler_name, optimizer, epochs):
@@ -181,6 +209,7 @@ def try_scheduler(trial, scheduler_name, optimizer, epochs):
                                                    [0.1, 1, 2, 3])
             
     scheduler = None
+    scheduler_params_str = f"Scheduler_{scheduler_name}_"
     if scheduler_name != 'None':
         if scheduler_name == 'ReduceLROnPlateau':
              scheduler = optim.lr_scheduler.ReduceLROnPlateau(
@@ -190,11 +219,13 @@ def try_scheduler(trial, scheduler_name, optimizer, epochs):
                  threshold=threshold,
                  patience=patience, 
                  cooldown=cooldown)
+             scheduler_params_str += f"factor_{factor:.5g}_threshold_{threshold:.5g}_patience_{patience}_cooldown_{cooldown}_"
         elif scheduler_name == 'StepLR':
             scheduler = optim.lr_scheduler.StepLR(
                 optimizer=optimizer,
                 step_size=step_size,
                 gamma=gamma)
+            scheduler_params_str += f"step_size_{step_size}_gamma_{gamma:.5g}_"
         elif scheduler_name == 'OneCycleLR':
             scheduler = optim.lr_scheduler.OneCycleLR(
                 optimizer=optimizer,
@@ -215,17 +246,20 @@ def try_scheduler(trial, scheduler_name, optimizer, epochs):
                 max_lr=cyclic_lr_max_lr,
                 step_size_up=int(epochs * 1 / 2 / cyclic_lr_step_size_up_f),
                 gamma=cyclic_lr_gamma)             
-        return scheduler
+        
+        return scheduler, scheduler_params_str
 
       
 def try_optimizer(trial, model):
     
-    optimizer_name = trial.suggest_categorical("optimizer", ["Adam", 
-                                                             "SGD", 
-                                                             "RMSprop", 
-                                                             "AdamW"])
+    optimizer_name = "AdamW"
+    # trial.suggest_categorical("optimizer", ["Adam", 
+    #                                                          "SGD", 
+    #                                                          "RMSprop", 
+    #                                                          "AdamW"])
+    
     # all optimizer params
-    learning_rate = trial.suggest_float("learning_rate", 1e-6, 1.)
+    learning_rate = trial.suggest_float("learning_rate", 1e-5, 0.01)
     eps = trial.suggest_float("eps", 1e-10, 1e-6)
     weight_decay = trial.suggest_float("weight_decay", 0.01, 0.6)
     # RMSprop
@@ -236,8 +270,16 @@ def try_optimizer(trial, model):
     beta1 = trial.suggest_float("beta1", 0.8, 0.8999)
     beta2 = trial.suggest_float("beta2", 0.9, 0.9999)
     
+    opt_params_str = ""
     # Create optimizer and scheduler based on trial suggestions
-    if optimizer_name == "Adam":
+    if optimizer_name == 'AdamW':
+        optimizer = optim.AdamW(model.parameters(), lr=learning_rate,
+                                      betas=(beta1, beta2),
+                                      eps=eps,
+                                      weight_decay=weight_decay)
+        opt_params_str = f"Optimizer_AdamW_lr_{learning_rate:.5f}_beta1_{beta1:.5f}_beta2_{beta2:.5f}"\
+                            f"_eps_{eps:.5g}_weight_decay_{weight_decay:.5f}_"
+    elif optimizer_name == "Adam":
         optimizer = optim.Adam(model.parameters(), lr=learning_rate, eps=eps,
                                betas=(beta1, beta2), weight_decay=weight_decay)   
     elif optimizer_name == 'RMSprop':
@@ -247,31 +289,56 @@ def try_optimizer(trial, model):
     elif optimizer_name == "SGD":
         optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum,
                               weight_decay=weight_decay)
-    elif optimizer_name == 'AdamW':
-        optimizer = optim.AdamW(model.parameters(), lr=learning_rate,
-                                      betas=(beta1, beta2),
-                                      eps=eps,
-                                      weight_decay=weight_decay)
         
-    return optimizer
+    return optimizer, opt_params_str
 
+def switch_criterion(bs_pred, bs_gt):
+    # for sum method only
+    sh = bs_pred.shape
+    reversed_bs_pred = torch.flip(bs_pred, dims=(1,))
+    loss1 = torch.mean(
+                torch.norm((bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2))**2 / \
+                    torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2)))**2
+    loss2 = torch.mean(
+                torch.norm((reversed_bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2))**2 / \
+                    torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2)))**2
+    # get the index for the minimal loss
+    i = np.argmin(np.array([loss1.item(), loss2.item()]))
+    # get the minimal loss
+    loss = torch.min(loss1, loss2)
+    switch = (i != 0)
+    
+    return loss, switch
+    
+def switch_position(pred, target):
+    switch = False
+    
+    bs_pred, pred = bs_calc(pred, "sum")
+    bs_target, target = bs_calc(target, "sum")
+    _, switch = switch_criterion(bs_pred, bs_target)
+    if switch:
+        pred = torch.flip(pred, dims=(-2,))
+    
+    return pred
             
 def objective(trial: Trial, epochs):
 
     # Initialize model and optimizer
-    model = try_model(trial, device)
+    model, model_params_str = try_model(trial, device)
     model.to(device)
-    optimizer = try_optimizer(trial, model)
+    optimizer, opt_params_str = try_optimizer(trial, model)
+    save_every = 200
     # set scheduler
     scheduler_name = trial.suggest_categorical("scheduler", 
-                                              [#"None",
+                                              ["None",
                                                #"Manual",
                                                "ReduceLROnPlateau", 
-                                               "OneCycleLR",
+                                               #"OneCycleLR",
                                                "StepLR",
-                                               "CosineAnnealingLR",
-                                               "CyclicLR"])
-    scheduler = try_scheduler(trial, scheduler_name, optimizer, epochs)
+                                               #"CosineAnnealingLR",
+                                               #"CyclicLR"
+                                               ])
+    scheduler, scheduler_params_str = try_scheduler(trial, scheduler_name, optimizer, epochs)
       
     # set train dataset and dataloader
     train_dataset = create_dataset(device, optuna_params.train_data_size, optuna_params.K,
@@ -279,19 +346,25 @@ def objective(trial: Trial, epochs):
                                    optuna_params.mode, optuna_params.folder_matlab)
     train_loader = prepare_data_loader(train_dataset, 
                                        batch_size=optuna_params.batch_size)
-
+    switch_pos = trial.suggest_categorical("switch_pos", [True, False])
+    suffix = f"K_{optuna_params.K}_N_{optuna_params.N}_bs_{optuna_params.batch_size}_ds_{optuna_params.train_data_size}_"\
+                f"loss_method_{optuna_params.loss_method}_switch_pos_{switch_pos}_{scheduler_params_str}_{opt_params_str}_"\
+                    f"{model_params_str}"
+    run = wandb.init(project="OptunaTests",
+       	           name = suffix,
+       	           config=args)
     # Start training    
     opt_loss = 0.
     
     # Train         
     model.train()
 
-    for epoch in range(epochs):
-
+    for epoch in range(1, epochs + 1):
         total_loss = 0
         total_mse_loss = 0
         total_mse_norm_loss = 0
-        
+        total_l1_loss = 0
+
         for idx, (sources, targets) in train_loader:
             # zero grads
             optimizer.zero_grad()
@@ -301,9 +374,11 @@ def objective(trial: Trial, epochs):
             sources = sources.to(device)
             # Forward pass
             output = model(sources) # reconstructed signal
+            if optuna_params.loss_method == 'sum' and switch_pos:
+                output = switch_position(output, targets)
             output, _ = aligner(output, targets)
             # Loss calculation
-            loss, mse_loss, rel_mse_loss = loss_all(output, targets)
+            loss, mse_loss, rel_mse_loss, l1_loss = loss_all(output, targets)
             # backward pass
             loss.backward()
             # optimizer step
@@ -312,14 +387,22 @@ def objective(trial: Trial, epochs):
             total_loss += loss.item()
             total_mse_loss += mse_loss.item()
             total_mse_norm_loss += rel_mse_loss.item()
+            total_l1_loss + l1_loss.item()
             # scheduler step after batch
-            if scheduler_name != 'None':
-                if scheduler_name in ['OneCycleLR', 'CosineAnnealingLR', 'CyclicLR']:
-                    scheduler.step()
+            # if scheduler_name != 'None':
+            #     if scheduler_name in ['OneCycleLR', 'CosineAnnealingLR', 'CyclicLR']:
+            #         scheduler.step()
         avg_loss = total_loss / len(train_loader)
         avg_mse_loss = total_mse_loss / len(train_loader) 
         avg_mse_norm_loss = total_mse_norm_loss / len(train_loader) 
-       
+        avg_l1_loss = total_l1_loss / len(train_loader) 
+        
+        if epoch % save_every == 0 or epoch == 1:                
+            wandb.log({"loss": avg_loss})
+            wandb.log({"MSE loss": avg_mse_loss})
+            wandb.log({"norm MSE loss": avg_mse_norm_loss})
+            wandb.log({"L1 loss": avg_l1_loss})
+
         # scheduler step after epoch
         if scheduler_name != 'None':
             if scheduler_name == 'Manual':
@@ -357,7 +440,7 @@ if __name__ == "__main__":
 
     parser.add_argument('--n', type=int, default=10, metavar='N',
             help='The umber of trials to run the test')
-    parser.add_argument('--epochs', type=int, default=7000, metavar='N',
+    parser.add_argument('--epochs', type=int, default=15000, metavar='N',
             help='The umber of epochs per trial')
     args = parser.parse_args()
     study = create_study(direction="minimize")
