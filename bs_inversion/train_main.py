@@ -80,7 +80,7 @@ def read_dataset_from_baseline(folder_matlab, data_size, K, N, label='x_true'):
     return target
    
 def create_dataset(device, data_size, K, N, read_baseline, mode, 
-                   folder_matlab, data_type, normalize=True):
+                   folder_matlab, data_type, normalize=False):
     bs_calc = BispectrumCalculator(K, N, device).to(device)
     print(f'read_baseline={read_baseline}, mode={mode}')
     if read_baseline: # in val dataset
@@ -177,17 +177,18 @@ def update_reduce_height_cnt(k, s, Hin):
 def get_model(device, args):
     if args.model == 2:
         head_class = HeadBS2
-        channels = hparams.channels_model2
+        # channels = hparams.channels_model2
     elif args.model == 3:
         head_class = HeadBS3 
-        channels = hparams.channels_model3
+        # channels = hparams.channels_model3
     else:
         head_class = HeadBS1
-        channels = hparams.channels_model1
- 
-    hparams.pre_conv_channels[-1] = hparams.last_ch
-    channels[-1] = hparams.last_ch
-    cnt, k, s = hparams.reduce_height
+        # channels = hparams.channels_model1
+    
+    channels = args.channels
+    args.pre_conv_channels[-1] = args.last_ch
+    channels[-1] = args.last_ch
+    cnt, k, s = args.reduce_height
     reduce_height = update_reduce_height_cnt(k, s, args.N)
     activation = set_activation(hparams.activation)
     model = CNNBS(
@@ -197,14 +198,14 @@ def get_model(device, args):
         n_heads=args.n_heads,
         channels=channels,
         b_maxout = args.maxout,
-        pre_conv_channels=hparams.pre_conv_channels,
-        pre_residuals=hparams.pre_residuals,
-        up_residuals=hparams.up_residuals,
-        post_residuals=hparams.post_residuals,
+        pre_conv_channels=args.pre_conv_channels,
+        pre_residuals=args.pre_residuals,
+        up_residuals=args.up_residuals,
+        post_residuals=args.post_residuals,
         pow_2_channels=args.pow_2_channels,
         reduce_height=reduce_height,
         head_class = head_class,
-        linear_ch=hparams.last_ch,
+        linear_ch=args.last_ch,
         activation=activation
         )
     return model
@@ -212,10 +213,10 @@ def get_model(device, args):
 
 def set_debug_args(args):
     args.N = hparams.debug_N				
-    hparams.pre_conv_channels = hparams.debug_pre_conv_channels
-    hparams.pre_residuals = hparams.debug_pre_residuals
-    hparams.up_residuals = hparams.debug_up_residuals
-    hparams.post_residuals = hparams.debug_post_residuals
+    args.pre_conv_channels = hparams.debug_pre_conv_channels
+    args.pre_residuals = hparams.debug_pre_residuals
+    args.up_residuals = hparams.debug_up_residuals
+    args.post_residuals = hparams.debug_post_residuals
     args.n_heads = hparams.debug_n_heads
     args.model = hparams.debug_model
     args.mode = hparams.debug_mode
@@ -224,16 +225,16 @@ def set_debug_args(args):
     args.comp_test_name_m = hparams.debug_comp_test_name_m
     args.comp_test_name = 'debug'
     if args.model == 2:
-        hparams.channels_model2 = hparams.debug_channels_model2
+        args.channels = hparams.debug_channels_model2
     elif args.model == 3:
-        hparams.channels_model3 = hparams.debug_channels_model3
+        args.channels = hparams.debug_channels_model3
     else:
-        hparams.channels_model1 = hparams.debug_channels_model1
+        args.channels = hparams.debug_channels_model1
     args.train_data_size = hparams.debug_train_data_size
     args.val_data_size = hparams.debug_val_data_size
     print('WARNING!! DEBUG value is True!')
     args.epochs = hparams.debug_epochs
-    hparams.last_ch = hparams.debug_last_ch
+    args.last_ch = hparams.debug_last_ch
     args.read_baseline = hparams.debug_read_baseline
     args.scheduler = hparams.debug_scheduler
     args.K = hparams.debug_K
@@ -276,7 +277,7 @@ def init(args):
             if args.run_mode == "new":
                 name_updated = False
                 for trial in range(5):
-                    random_number = random.randint(0, 20)
+                    random_number = random.randint(0, 50)
                     if not os.path.exists(f'{folder_python}_{random_number}'):
                         folder_python += f"_{random_number}"
                         print(f'run name has been updated to {folder_python}')
@@ -544,10 +545,7 @@ if __name__ == "__main__":
     parser.add_argument('--model', type=int, default=3,  
                         help='1 for CNNBS1 - reshape size to reduce dimension'
                         ' 2 for CNNBS2 - strided convolution to reduce dimension')
-    # for CNNBS2
-    parser.add_argument('--reduce_height', type=int, nargs='+', default=[4, 3, 3], 
-                        help='relevant only for model2 - [count kernel stride]'
-                        'for reducing height in tensor: BXCXHXW to BXCX1XW')
+
     parser.add_argument('--loss_mode', type=str, default="l1",  
                         help='\'all\' - l1, mse, rel_mse. default: \'l1\' - l1 loss.'
                         'Note: the training loss is always l1') 
@@ -588,7 +586,26 @@ if __name__ == "__main__":
                         help='one out of \"normal_distribution\", \"gaussian_pulse\". '
                         'gaussian_pulse does not have baseline data to read from.') 
     parser.add_argument('--loss_criterion', type=str, default="l1", 
-                        help='one out of \"l1\", \"mse\", \"sc\".) 
+                        help='one out of \"l1\", \"mse\", \"sc\".') 
+    # model 
+    parser.add_argument('--pre_residuals', type=int, default=9, 
+                        help='pre residuals layers count')
+    parser.add_argument('--up_residuals', type=int, default=8, 
+                        help='up residuals layers count')
+    parser.add_argument('--post_residuals', type=int, default=2, 
+                        help='post residuals layers count')
+    parser.add_argument('--last_ch', type=int, default=256, 
+                        help='last_ch')
+    parser.add_argument('--channels', type=int, nargs='+', 
+                        default=[32, 8], 
+                        help='layer_channels list of values on each of heads. '
+                        'The default fits model3')
+    parser.add_argument('--pre_conv_channels', type=int, nargs='+', 
+                        default=[8, 32], 
+                        help='layer_channels list of values on each of heads')
+    parser.add_argument('--reduce_height', type=int, nargs='+', default=[4, 3, 3], 
+                        help='relevant only for model2 - [count kernel stride] ' 
+                        'for reducing height in tensor: BXCXHXW to BXCX1XW')
     # Parse arguments
     args = parser.parse_args()
 

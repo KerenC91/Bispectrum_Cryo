@@ -119,10 +119,9 @@ hparams = HParams(
     channels_model1 = [256, 8],
     channels_model2 = [256, 64],
     channels_model3 = [32,8],#[256, 8],
-    linear_ch = 32,#256, # for model1: channels[-1], for model2: 8, 
     pre_conv_channels = [8, 32],#[8, 32, 256], 
                         #layer_channels list of values on each of heads
-    reduce_height = [4, 3, 3], # RELEVANT FOR MODEL2 ONLY
+    reduce_height = [4, 3, 3], # RELEVANT FOR MODEL2, 3 ONLY
                     #relevant only for model2 - [count kernel stride]
                     #for reducing height in tensor: BXCXHXW to BXCX1XW
     pre_residuals = 9,#11, 
