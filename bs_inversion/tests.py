@@ -3,7 +3,8 @@ import torch.nn as nn
 import math
 from utils import (calculate_bispectrum_power_spectrum_efficient,
             clculate_bispectrum_efficient, BatchAligneToReference, 
-            read_csv_from_matlab, rand_shift_signal, align_to_reference)
+            read_csv_from_matlab, rand_shift_signal, align_to_reference,
+            create_gaussian_pulse)
 import torch
 import torch.nn as nn
 import os
@@ -49,7 +50,18 @@ def test_strided_conv_height():
                             kernel_size,
                             stride)
 
-
+def test_create_gaussian_pulse():
+    data_size = 100
+    n = 20
+    n_per_side = n / 2
+    percentage = 0.1
+    mean = torch.rand(data_size) * n - n_per_side - percentage * n_per_side
+    std = torch.rand(data_size) * 1000
+    create_gaussian_pulse(mean, std, n, amplitude=None)
+    
+    print("done")
+    
+    
 def strided_conv_height(batch_size, 
                         in_channels, 
                         in_height, 
@@ -300,10 +312,11 @@ def test_loss_sc_efficient():
        
     
 if __name__ == "__main__":
+    test_create_gaussian_pulse()
     #test_bs_py_matlab()
     #test_bs_correlation()
     #test_align_data_plot(6)
-    test_loss_sc_efficient()
+    #test_loss_sc_efficient()
     #test_signals_correlation_batch()
     #read_test_from_matlab()
     #test_VectorProcessor()

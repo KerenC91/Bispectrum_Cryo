@@ -34,22 +34,6 @@ aligner = BatchAligneToReference(device).to(device)
 wandb.login()
 
               
-
-class UnitVecDataset(Dataset):
-    
-    def __init__(self, source, target):
-        self.target = target
-        self.source = source
-        self.data_size = self.__len__()
-            
-        
-    def __len__(self):
-        return self.target.size(0)
-    
-    def __getitem__(self, idx):
-
-        return idx, (self.source[idx], self.target[idx])
-
 def loss_sc(bs_pred, bs_gt, method="average"):
 
      if method == "sum":
@@ -343,7 +327,8 @@ def objective(trial: Trial, epochs):
     # set train dataset and dataloader
     train_dataset = create_dataset(device, optuna_params.train_data_size, optuna_params.K,
                                    optuna_params.N, optuna_params.read_baseline, 
-                                   optuna_params.mode, optuna_params.folder_matlab)
+                                   optuna_params.mode, optuna_params.folder_matlab, 
+                                   optuna_params.data_type, optuna_params.normalize)
     train_loader = prepare_data_loader(train_dataset, 
                                        batch_size=optuna_params.batch_size)
     switch_pos = trial.suggest_categorical("switch_pos", [True, False])

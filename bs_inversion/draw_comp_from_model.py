@@ -12,7 +12,7 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 import argparse
 from utils import clculate_bispectrum_efficient, align_to_reference, BatchAligneToReference, BispectrumCalculator
-from train_main import get_model, read_org, read_dataset_from_baseline, UnitVecDataset, create_dataset
+from train_main import get_model, read_org, read_dataset_from_baseline, create_dataset
 from compare_to_baseline import read_tensor_from_matlab
 from hparams import hparams
 from torch.utils.data import Dataset, DataLoader
@@ -47,6 +47,7 @@ K = args.K
 check_k1_k2_distance = False
 mode = 'rand'
 data_size=100
+data_type = 'normal_distribution'
 normalize=True
 f1 = 0  #loss_sc
 f2 = 1. #loss_l1_aligned
@@ -187,6 +188,7 @@ dataset = create_dataset(device,
                          read_baseline, 
                          mode, 
                          baseline_data_path, 
+                         data_type,
                          normalize)
 dataloader = DataLoader(
     dataset=dataset,

@@ -5,6 +5,13 @@ import torch.nn as nn
 import math
 from hparams import hparams
 
+
+def create_gaussian_pulse(mean, std, n, amplitude=1):
+    t = torch.linspace(-(n - 1) / 2, (n - 1) / 2, n)
+    x = amplitude * torch.exp(-(t - mean) ** 2 / (2 * std ** 2))  # Gaussian function
+
+    return x, t
+
 def read_csv_from_matlab(file):
     x = np.loadtxt(file, delimiter=" ")
     x = torch.tensor(x).unsqueeze(0).unsqueeze(0)

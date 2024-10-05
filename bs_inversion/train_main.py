@@ -5,7 +5,7 @@ import wandb
 import torch 
 from torch.utils.data import Dataset, DataLoader
 import argparse
-from utils import BispectrumCalculator, rand_shift_signal
+from utils import BispectrumCalculator, rand_shift_signal, create_gaussian_pulse
 from model1 import CNNBS, HeadBS1
 from model2 import HeadBS2
 from model3 import HeadBS3
@@ -25,7 +25,7 @@ torch.manual_seed(234)
 
                 
 
-class UnitVecDataset(Dataset):
+class BispectrumDataset(Dataset):
     
     def __init__(self, source, target):
         self.target = target
@@ -80,15 +80,29 @@ def read_dataset_from_baseline(folder_matlab, data_size, K, N, label='x_true'):
     return target
    
 def create_dataset(device, data_size, K, N, read_baseline, mode, 
-                   folder_matlab, normalize=True):
+                   folder_matlab, data_type, normalize=True):
     bs_calc = BispectrumCalculator(K, N, device).to(device)
     print(f'read_baseline={read_baseline}, mode={mode}')
     if read_baseline: # in val dataset
+        if data_type == 'gaussian_pulse':
+            print("Error! Gaussian pulse does not have data to read from.")
+            sys.exit(1)
         target = read_dataset_from_baseline(folder_matlab, data_size, K, N)
     else:
         if mode[0] == 'opt':
             # Create random dataset
-            target = torch.randn(data_size, K, N)
+            if data_type == 'gaussian_pulse':
+                eff_data_size = data_size * K
+                target = torch.zeros(eff_data_size, N)
+                n_per_side = N / 2.0
+                percentage = 0.1
+                mean = np.random.uniform(-n_per_side, n_per_side, eff_data_size) - percentage * n_per_side
+                std = np.random.uniform(0.0, 1000.0, eff_data_size)
+                for i in range(eff_data_size):
+                    target[i], _ = create_gaussian_pulse(mean[i], std[i], N)
+                target = target.view(data_size, K, N)
+            else: # normal distribution
+                target = torch.randn(data_size, K, N)
         elif mode[0] == 'rand':
             # Initialize dataset to zeros and create data on the fly 
             target = torch.zeros(data_size, K, N)
@@ -101,7 +115,7 @@ def create_dataset(device, data_size, K, N, read_baseline, mode,
     source, target = bs_calc(target)
     if mode[0] == 'opt' and mode[1] == 'shift' and not read_baseline:
             target, shifts = rand_shift_signal(target, K, N, data_size)
-    dataset = UnitVecDataset(source, target)
+    dataset = BispectrumDataset(source, target)
 
     return dataset
 
@@ -257,19 +271,20 @@ def init(args):
         else:#"new"
             os.mkdir(folder_python)
     else:
-        print(f'run {args.comp_test_name} already exists')
-        if args.run_mode == "new":
-            name_updated = False
-            for trial in range(5):
-                random_number = random.randint(0, 20)
-                if not os.path.exists(f'{folder_python}_{random_number}'):
-                    folder_python += f"_{random_number}"
-                    print(f'run name has been updated to {folder_python}')
-                    name_updated = True
-                    break
-            if name_updated == False:
-                print(f'Error! Could not update run name {folder_python}')
-                sys.exit(1)
+        if len(os.listdir(folder_python)) > 0:
+            print(f'run {args.comp_test_name} already exists')
+            if args.run_mode == "new":
+                name_updated = False
+                for trial in range(5):
+                    random_number = random.randint(0, 20)
+                    if not os.path.exists(f'{folder_python}_{random_number}'):
+                        folder_python += f"_{random_number}"
+                        print(f'run name has been updated to {folder_python}')
+                        name_updated = True
+                        break
+                if name_updated == False:
+                    print(f'Error! Could not update run name {folder_python}')
+                    sys.exit(1)
     if args.read_baseline:
         # Set folder to read baseline data from
         folder_matlab = os.path.join(os.path.join(hparams.data_root, 'baseline_data'), 
@@ -393,7 +408,8 @@ def main(args):
 
     train_dataset = create_dataset(device, args.train_data_size, args.K, args.N,
                                    read_baseline_train, args.mode,
-                                   folder_matlab, args.normalize)
+                                   folder_matlab, args.data_type, 
+                                   args.normalize)
 
     train_loader = prepare_data_loader(train_dataset, args.batch_size)
     # Set validation dataset and dataloader 
@@ -402,7 +418,9 @@ def main(args):
 
     val_dataset = create_dataset(device, args.val_data_size, args.K, args.N,
                                  read_baseline_val, ['opt', 'none'],
-                                 folder_matlab, args.normalize)
+                                 folder_matlab, args.data_type,
+                                 args.normalize)
+    
     val_loader = prepare_data_loader(val_dataset, args.batch_size)
     
     scheduler = set_scheduler(args.scheduler, optimizer, args.epochs, len(train_loader))
@@ -566,6 +584,9 @@ if __name__ == "__main__":
     parser.add_argument('--run_mode', type=str, default="new", 
                         help='one out of \"override\", \"resume\", \"new\" existing run '
                         'eventhough a checkpoint exists') 
+    parser.add_argument('--data_type', type=str, default="normal_distribution", 
+                        help='one out of \"normal_distribution\", \"gaussian_pulse\". '
+                        'gaussian_pulse does not have baseline data to read from.') 
     # Parse arguments
     args = parser.parse_args()
 
