@@ -72,34 +72,34 @@ class Trainer:
         self.plotting_off = args.plotting_off
         self.eps = args.eps#1e-8
         self.clip = args.clip_grad_norm
-        
+        self.loss_criterion = args.loss_criterion
         
     def _loss(self, pred, target):
         total_loss = 0.
 
-        if hparams.f1 != 0:
+        if self.loss_criterion == "sc":
             bs_pred, _ = self.bs_calc(pred)
             bs_target, _ = self.bs_calc(target)
             loss_sc = self._loss_sc(bs_pred, bs_target)
-            total_loss += hparams.f1 * loss_sc
-        if hparams.f2 != 0:
+            total_loss = loss_sc
+        elif self.loss_criterion == "l1":
             loss_l1_aligned = self._loss_l1(pred, target)
-            total_loss += hparams.f2 * loss_l1_aligned  
-        if hparams.f3 != 0:
+            total_loss = loss_l1_aligned  
+        if self.loss_criterion == "mse":
             loss_mse_aligned = self._loss_MSE(pred, target)
-            total_loss += hparams.f3 * loss_mse_aligned
+            total_loss = loss_mse_aligned
 
         return total_loss
     
     def _switch_position(self, pred, target):
         switch = False
-        if hparams.f1 != 0: #loss_sc
+        if self.loss_criterion == "sc":
             bs_pred, pred = self.bs_calc(pred, "sum")
             bs_target, target = self.bs_calc(target, "sum")
             _, switch = self._switch_criterion(bs_pred, bs_target)
-        if hparams.f2 != 0: #loss_l1_aligned
+        elif self.loss_criterion == "l1":
             _, switch = self._switch_criterion_l1_aligned(pred, target)
-        if hparams.f3 != 0: #loss_l1_mse
+        elif self.loss_criterion == "mse":
             _, switch = self._switch_criterion_mse_aligned(pred, target)
         if switch:
             pred = torch.flip(pred, dims=(-2,))
@@ -109,17 +109,17 @@ class Trainer:
     def _loss_all(self, pred, target):          
         total_loss = 0.
         
-        if hparams.f1 != 0:
+        if self.loss_criterion == "sc":
             bs_pred, pred = self.bs_calc(pred, self.loss_method)
             bs_target, target = self.bs_calc(target, self.loss_method)  
             loss_sc = self._loss_sc(bs_pred, bs_target, self.loss_method)
-            total_loss += hparams.f1 * loss_sc
-        if hparams.f2 != 0:
+            total_loss = loss_sc
+        elif self.loss_criterion == "l1":
             loss_l1_aligned = self._loss_l1(pred, target)
-            total_loss += hparams.f2 * loss_l1_aligned 
-        if hparams.f3 != 0:
+            total_loss = loss_l1_aligned 
+        elif self.loss_criterion == "mse":
             loss_mse_aligned = self._loss_MSE(pred, target)
-            total_loss += hparams.f3 * loss_mse_aligned
+            total_loss = loss_mse_aligned
 
         loss = total_loss, \
                 self._loss_MSE(pred, target), \

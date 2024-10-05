@@ -587,6 +587,8 @@ if __name__ == "__main__":
     parser.add_argument('--data_type', type=str, default="normal_distribution", 
                         help='one out of \"normal_distribution\", \"gaussian_pulse\". '
                         'gaussian_pulse does not have baseline data to read from.') 
+    parser.add_argument('--loss_criterion', type=str, default="l1", 
+                        help='one out of \"l1\", \"mse\", \"sc\".) 
     # Parse arguments
     args = parser.parse_args()
 

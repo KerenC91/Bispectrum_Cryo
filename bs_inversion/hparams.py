@@ -137,7 +137,6 @@ hparams = HParams(
     loss_lim = 1e-6,
     # comparison with baseline
     data_root = '../../Bispectrum_Cryo/data',
-    checkpoints_root = 'checkpoints',
     #Additional params
     norm_bs = False,
 )

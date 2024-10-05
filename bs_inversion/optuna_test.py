@@ -407,17 +407,6 @@ def objective(trial: Trial, epochs):
     return opt_loss
     
 
-# class Objective:
-#     def __init__(self, min_x, max_x):
-#         # Hold this implementation specific arguments as the fields of the class.
-#         self.min_x = min_x
-#         self.max_x = max_x
-
-#     def __call__(self, trial):
-#         # Calculate an objective value by using the extra arguments.
-#         x = trial.suggest_float("x", self.min_x, self.max_x)
-#         return (x - 2) ** 2
-
 if __name__ == "__main__":
     # Add arguments to parser
     parser = argparse.ArgumentParser(
