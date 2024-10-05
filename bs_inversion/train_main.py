@@ -440,10 +440,11 @@ def main(args):
             model.load_state_dict(checkpoint['model_state_dict'])
             model = model.to(device)
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            if args.scheduler_from_start: 
-                scheduler = set_scheduler(args.scheduler, optimizer, args.epochs - epoch, len(train_loader))
-            else:
-                scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            if args.scheduler != "None":
+                if args.scheduler_from_start: 
+                    scheduler = set_scheduler(args.scheduler, optimizer, args.epochs - epoch, len(train_loader))
+                else:
+                    scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
             if epoch >= args.epochs:
                 print(f'Error! epoch={epoch} must be smaller then args.epochs={args.epochs}')
                 sys.exit(1)
