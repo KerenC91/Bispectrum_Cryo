@@ -373,7 +373,7 @@ class Trainer:
         else:
             torch.save({'epoch': self.epoch,
                 'model_state_dict': self.model.state_dict(),
-                'optimizer_state_dict': self.optimizer.state_dict(),
+                'optimizer_state_dict': self.optimizer.state_dict()},
                 f'{self.folder_python}/ckp.pt')    
         
     def _run_epoch_train(self):
