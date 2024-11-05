@@ -394,6 +394,25 @@ def main(args):
 
     args = update_suffix(args)
 
+    # Initialize wandb
+    run = None
+    if wandb_flag:
+        wandb.login()
+        if args.wandb_run_id == '':
+            run = wandb.init(project=args.wandb_proj_name,
+               	           name = f"{args.suffix}",
+               	           config=args)
+            wandb.log({"cmd_line": sys.argv})
+            wandb.save('hparams.py')
+            wandb.save("train_main.py")
+            wandb.save(f"model{args.model}.py")     
+        else: #resume run
+            run_id = args.wandb_run_id
+            resume_mode = "must"
+            run = wandb.init(project=args.wandb_proj_name, 
+                             id=run_id, 
+                             resume=resume_mode)
+            
     # Initialize args
     folder_matlab, folder_python = init(args)
     # Initialize model and optimizer
@@ -468,23 +487,6 @@ def main(args):
                       args=args)
     
     start_time = time.time()
-    run = None
-    if wandb_flag:
-        wandb.login()
-        if args.wandb_run_id == '':
-            run = wandb.init(project=args.wandb_proj_name,
-               	           name = f"{args.suffix}",
-               	           config=args)
-            wandb.log({"cmd_line": sys.argv})
-            wandb.save('hparams.py')
-            wandb.save("train_main.py")
-            wandb.save(f"model{args.model}.py")     
-        else: #resume run
-            run_id = args.wandb_run_id
-            resume_mode = "must"
-            run = wandb.init(project=args.wandb_proj_name, 
-                             id=run_id, 
-                             resume=resume_mode)
     # Train and evaluate
     trainer.run()
     end_time = time.time()
