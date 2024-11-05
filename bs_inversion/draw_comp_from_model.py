@@ -17,6 +17,9 @@ from compare_to_baseline import read_tensor_from_matlab
 from hparams import hparams
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
+
+torch.manual_seed(234)
+
 # Parse args
 parser = argparse.ArgumentParser(description='Inverting the bispectrum. Pulse dataset')
 
@@ -34,26 +37,46 @@ parser.add_argument('--n_heads', type=int, default=1,
 parser.add_argument('--model', type=int, default=3,  
                     help='1 for CNNBS1 - reshape size to reduce dimension'
                     ' 2 for CNNBS2 - strided convolution to reduce dimension')
+# model 
+parser.add_argument('--pre_residuals', type=int, default=9, 
+                    help='pre residuals layers count')
+parser.add_argument('--up_residuals', type=int, default=8, 
+                    help='up residuals layers count')
+parser.add_argument('--post_residuals', type=int, default=2, 
+                    help='post residuals layers count')
+parser.add_argument('--last_ch', type=int, default=256, 
+                    help='last_ch')
+parser.add_argument('--channels', type=int, nargs='+', 
+                    default=[32, 8], 
+                    help='layer_channels list of values on each of heads. '
+                    'The default fits model3')
+parser.add_argument('--pre_conv_channels', type=int, nargs='+', 
+                    default=[8, 32], 
+                    help='layer_channels list of values on each of heads')
+parser.add_argument('--reduce_height', type=int, nargs='+', default=[4, 3, 3], 
+                    help='relevant only for model2 - [count kernel stride] ' 
+                    'for reducing height in tensor: BXCXHXW to BXCX1XW')
+    
 args = parser.parse_args()
 
 # Set device
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # Set args
 baseline_data_folder = f'baseline_K_{args.K}_N_{args.N}'
-model_folder = 'test_K_2_N_20_l1_alligned_loss_sum_rand'
+model_folder = 'test_sc_avg_32'
 test_folder = model_folder
 N = args.N
 K = args.K
 check_k1_k2_distance = False
-mode = 'rand'
-data_size=100
-data_type = 'normal_distribution'
+mode = ['opt', 'none']
+data_size=5000
+data_type = 'gaussian_pulse'
 normalize=True
 f1 = 0  #loss_sc
 f2 = 1. #loss_l1_aligned
 f3 = 0. #loss_l1_mse
-read_baseline = True
-if mode == 'opt':
+read_baseline = False
+if mode[0] == 'opt':
     read_baseline = False
 
 # Set baeline data path
