@@ -158,7 +158,21 @@ class CNNBS(nn.Module):
          reduce_height, 
          head_class,
          linear_ch,
-         activation):
+         activation,
+         #
+         window_size,
+         img_size,
+         patch_size,
+         depths,
+         num_heads,
+         qkv_bias,
+         qk_scale,
+         drop,
+         attn_drop,
+         drop_path_rate,
+         norm_layer,
+         downsample,
+         resi_connection):
 
         super(CNNBS, self).__init__()
         self.device = device
@@ -171,7 +185,20 @@ class CNNBS(nn.Module):
                 pre_conv_channels=pre_conv_channels, 
                 pre_residuals=pre_residuals, up_residuals=up_residuals,
                 post_residuals=post_residuals, pow_2_channels=pow_2_channels, 
-                reduce_height=reduce_height, last_ch=linear_ch)
+                reduce_height=reduce_height, last_ch=linear_ch,
+                window_size = window_size,
+                img_size=img_size,
+                patch_size=patch_size,
+                depths=depths,
+                num_heads=num_heads,
+                qkv_bias=qkv_bias,
+                qk_scale=qk_scale,
+                drop=drop,
+                attn_drop=attn_drop,
+                drop_path_rate=drop_path_rate,
+                norm_layer=norm_layer,
+                downsample=downsample,
+                resi_connection=resi_connection)
                                     for _ in range(n_heads)])
 
     def forward(self, x):

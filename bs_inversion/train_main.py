@@ -206,7 +206,22 @@ def get_model(device, args):
         reduce_height=reduce_height,
         head_class = head_class,
         linear_ch=args.last_ch,
-        activation=activation
+        activation=activation,
+        #
+        window_size = args.window_size,
+        img_size = args.img_size,
+        patch_size = args.patch_size,
+        depths = args.depths,
+        num_heads = args.num_heads,
+        qkv_bias = args.qkv_bias,
+        qk_scale = args.qk_scale,
+        drop = args.drop,
+        attn_drop = args.attn_drop,
+        drop_path_rate = args.drop_path_rate,
+        norm_layer = args.norm_layer,
+        downsample = args.downsample,
+        resi_connection = args.resi_connection
+        #Add here!!! attention params
         )
     return model
 
@@ -362,7 +377,7 @@ def set_scheduler(scheduler_name, optimizer, epochs, len_trainloader):
                 step_size_up=int(epochs * len_trainloader / 2 / hparams.cyclic_lr_step_size_up_f),
                 gamma=hparams.cyclic_lr_gamma) 
 
-        return scheduler
+    return scheduler
     
 
     
@@ -523,11 +538,9 @@ if __name__ == "__main__":
     parser.add_argument('--scheduler_from_start', action='store_true', 
                         help='In case of loading from checkpoint, if set, start scheduler from scratch.'
                         ' Else, resume scheduler from checkpoint.') 
-    parser.add_argument('--lr', type=float, default=1e-2, metavar='f',
-            help='learning rate (initial for dynamic lr, otherwise fixed)')  
-    parser.add_argument('--eps', type=float, default=0, metavar='f',
-            help='epsilon value to add to loss for avoiding Nans and infinite values')     
-    parser.add_argument('--mode', type=str, nargs='+', default=['opt'],
+    parser.add_argument('--lr', type=float, default=3e-4, metavar='f',
+            help='learning rate (initial for dynamic lr, otherwise fixed)')     
+    parser.add_argument('--mode', type=str, nargs='+', default=['opt', None],
             help= '[mode, add], mode in {\'rand\'\,\'opt\'}, add (optioanl) in {\'shift\', \'circular_shifts\'}'
                 '\'rand\': Create random data during training.\n'
                     '\'opt\': Create a fixed dataset'
@@ -600,15 +613,48 @@ if __name__ == "__main__":
     parser.add_argument('--last_ch', type=int, default=256, 
                         help='last_ch')
     parser.add_argument('--channels', type=int, nargs='+', 
-                        default=[32, 8], 
+                        default=[256, 8], 
                         help='layer_channels list of values on each of heads. '
                         'The default fits model3')
     parser.add_argument('--pre_conv_channels', type=int, nargs='+', 
-                        default=[8, 32], 
+                        default=[8, 32, 256], 
                         help='layer_channels list of values on each of heads')
     parser.add_argument('--reduce_height', type=int, nargs='+', default=[4, 3, 3], 
                         help='relevant only for model2 - [count kernel stride] ' 
                         'for reducing height in tensor: BXCXHXW to BXCX1XW')
+    # Swin Transformers params
+    parser.add_argument('--window_size', type=int, default=8, 
+                        help='window_size')    
+    parser.add_argument('--img_size', type=int, default=48, 
+                        help='img_size')#seems unused!!!
+    parser.add_argument('--patch_size', type=int, default=1, 
+                        help='patch size used in training SwinIR. '
+                            'Just used to differentiate two different settings in Table 2 of the paper. '
+                            'Images are NOT tested patch by patch.')    
+    # parser.add_argument('--embed_dim', type=int, default=128, 
+    #                     help='embed_dim') #This is exactly last ch
+    parser.add_argument('--depths', type=int, nargs='+', 
+                        default=[6, 6], 
+                        help='depths')    
+    parser.add_argument('--num_heads', type=int, nargs='+', 
+                        default=[2, 2], 
+                        help='num_heads')      
+    parser.add_argument('--qkv_bias', action='store_true', 
+                        help='') 
+    parser.add_argument('--qk_scale', action='store_true', 
+                        help='')     
+    parser.add_argument('--drop', type=float, default=0.,
+                        help='drop')
+    parser.add_argument('--attn_drop', type=float, default=0.,
+                        help='attn_drop')
+    parser.add_argument('--drop_path_rate', type=float, default=0.1,
+                        help='drop_path_rate')
+    parser.add_argument('--norm_layer',  action='store_false',
+                        help='norm_layer')
+    parser.add_argument('--downsample', action='store_true', 
+                        help='downsample')
+    parser.add_argument('--resi_connection', type=str, default='1conv',
+                        help='resi_connection')
     # Parse arguments
     args = parser.parse_args()
 

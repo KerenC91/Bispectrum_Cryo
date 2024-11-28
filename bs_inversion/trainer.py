@@ -70,7 +70,6 @@ class Trainer:
         self.is_training = True
         self.loss_method = args.loss_method
         self.plotting_off = args.plotting_off
-        self.eps = args.eps#1e-8
         self.clip = args.clip_grad_norm
         self.loss_criterion = args.loss_criterion
         
@@ -148,25 +147,28 @@ class Trainer:
             sh = bs_pred.shape
             loss = torch.mean(
                         torch.norm((bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2))**2/ \
-                            torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2))**2) + self.eps
-            # if self.wandb_flag and \
-            #     (self.epoch == 1 or self.epoch % self.save_every == 0):
-            #     if (self.is_training):
-            #         wandb.log({"bs_pred_minus_bs_gt_norm_avg": torch.mean(torch.norm((bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2)))})
-            #         wandb.log({"bs_gt_norm_avg": torch.mean(torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2)))})
+                            torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2))**2)
+            if hparams.DEBUG:
+                if self.wandb_flag and \
+                    (self.epoch == 1 or self.epoch % self.save_every == 0):
+                    if (self.is_training):
+                        wandb.log({"bs_pred_minus_bs_gt_norm_avg": torch.mean(torch.norm((bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2)))})
+                        wandb.log({"bs_gt_norm_avg": torch.mean(torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2)))})
         else:
-            loss = torch.norm(bs_pred - bs_gt)**2 / torch.norm(bs_gt)**2 + self.eps
-        #     if self.wandb_flag and \
-        #         (self.epoch == 1 or self.epoch % self.save_every == 0):
-        #         if (self.is_training):
-        #             wandb.log({"bs_pred_minus_bs_gt_norm": torch.norm(bs_pred - bs_gt)})
-        #             wandb.log({"bs_gt_norm": torch.norm(bs_gt)})
-                               
-        # if self.wandb_flag and \
-        #     (self.epoch == 1 or self.epoch % self.save_every == 0):
-        #     if (self.is_training):
-        #         wandb.log({"bs_pred": torch.norm(bs_pred)})
-        #         wandb.log({"bs_gt": torch.norm(bs_gt)})
+            loss = torch.norm(bs_pred - bs_gt)**2 / torch.norm(bs_gt)**2
+            if hparams.DEBUG:
+                if self.wandb_flag and \
+                    (self.epoch == 1 or self.epoch % self.save_every == 0):
+                    if (self.is_training):
+                        wandb.log({"bs_pred_minus_bs_gt_norm": torch.norm(bs_pred - bs_gt)})
+                        wandb.log({"bs_gt_norm": torch.norm(bs_gt)})
+        
+        if hparams.DEBUG:
+            if self.wandb_flag and \
+                (self.epoch == 1 or self.epoch % self.save_every == 0):
+                if (self.is_training):
+                    wandb.log({"bs_pred": torch.norm(bs_pred)})
+                    wandb.log({"bs_gt": torch.norm(bs_gt)})
         return loss
     
     def _switch_criterion(self, bs_pred, bs_gt):
@@ -242,7 +244,7 @@ class Trainer:
         """
         return torch.mean(
                     torch.norm(pred - target, dim=(0, 2))**2 / \
-                    torch.norm(target, dim=(0, 2))**2) + self.eps
+                    torch.norm(target, dim=(0, 2))**2)
 
     def _loss_l1(self, pred, target):
         """
@@ -284,12 +286,13 @@ class Trainer:
         TYPE    torch float
         || s - rec_s ||_1 / len(s)
 
-        """    
-        # if self.wandb_flag and \
-        #     (self.epoch == 1 or self.epoch % self.save_every == 0):
-        #     if (self.is_training):
-        #         wandb.log({"pred": torch.norm(pred)})
-        #         wandb.log({"gt": torch.norm(target)})
+        """  
+        if hparams.DEBUG:
+            if self.wandb_flag and \
+                (self.epoch == 1 or self.epoch % self.save_every == 0):
+                if (self.is_training):
+                    wandb.log({"pred": torch.norm(pred)})
+                    wandb.log({"gt": torch.norm(target)})
         criterion = torch.nn.MSELoss()  
         
         return criterion(pred, target)
@@ -608,6 +611,7 @@ class Trainer:
                     wandb.log({"val relative mse": val_rel_mse_loss})
             # save checkpoint and log loss to cmd 
             if self.epoch == 1 or self.epoch % self.save_every == 0:
+            # if self.epoch == 1 or self.epoch >= 3200:
                 print(f'-------Epoch {self.epoch}/{self.epochs}-------')
                 print(f'Total Train loss: {train_loss:.6f}')
                 print(f'Total Validation loss: {val_loss:.6f}')
