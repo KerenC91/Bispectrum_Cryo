@@ -1,0 +1,211 @@
+import torch
+import numpy as np
+import torch
+import torch.nn as nn
+import math
+
+
+def create_gaussian_pulse(mean, std, n, amplitude=1):
+    t = torch.linspace(-(n - 1) / 2, (n - 1) / 2, n)
+    x = amplitude * torch.exp(-(t - mean) ** 2 / (2 * std ** 2))  # Gaussian function
+
+    return x, t
+
+def read_csv_from_matlab(file):
+    x = np.loadtxt(file, delimiter=" ")
+    x = torch.tensor(x).unsqueeze(0).unsqueeze(0)
+    return x
+
+def calculate_bispectrum_power_spectrum_efficient(x, dt=1.):
+    """
+    
+
+    Parameters
+    ----------
+    x : torch N size, float
+        signal.
+    dt : float
+        time resolution.
+
+    Returns
+    -------
+    Bx : torch NXNX1 size, complex-float
+        Bispectrum.
+    Px : torch NX1 size, float (could be complex)
+        Power spectrum.
+    f : float
+        frequency resolution.
+
+    """
+    # Get signal's length
+    N = len(x)
+    # Calculate DFT(x)
+    y = torch.fft.fft(x)
+    # Shift the DFT to the center
+    y_shifted = torch.fft.fftshift(y)
+    # Calculate the Power spectrum of x
+    Px = y_shifted * torch.conj(y_shifted).T
+    if torch.all(torch.isreal(Px)).item() == True:
+        Px = Px.real # change to float type
+    else:
+        #print('Px is complex')
+        pass
+    # Calculate the Bispectrum
+    Bx = clculate_bispectrum_efficient(x)
+
+    # Calculate frequency resolution
+    f = np.fft.fftshift(np.fft.fftfreq(N, dt))
+
+    return Bx, Px, f
+   
+def clculate_bispectrum_efficient(x, normalize=False):
+    """
+    
+
+    Parameters
+    ----------
+    x : torch N size, float
+        signal.
+    Returns
+    -------
+    Bx : torch NXNX1 size, complex-float
+        Bispectrum.
+
+    """
+    y = torch.fft.fft(x)
+    circulant = lambda v: torch.cat([f := v, f[:-1]]).unfold(0, len(v), 1).flip(0)
+    # Bx = (y.unsqueeze(1) *\
+    #     torch.conj(y).T.unsqueeze(0)) * circulant(torch.roll(y, -1))
+    C = circulant(torch.roll(y, -1))
+    Bx = y.unsqueeze(1) @ y.conj().unsqueeze(0)
+    Bx = Bx * C
+    
+    if normalize:
+        eps = 1e-8
+        Bx_factor = torch.pow(torch.abs(Bx), 2/3) + eps
+        Bx = Bx / Bx_factor
+    return Bx
+
+
+class BispectrumCalculator(nn.Module):
+    def __init__(self, targets_count, target_len, device):
+        super().__init__()
+        self.calculator = clculate_bispectrum_efficient
+        self.targets_count = targets_count
+        self.target_len = target_len
+        self.device = device
+        self.channels = 2
+        self.height = target_len
+        self.width = target_len
+        
+    def _create_data(self, target):
+        # Create data
+        target = target.clone()
+        bs = self.calculator(target)
+        bs_real = bs.real.float()
+        bs_imag = bs.imag.float()
+        source = torch.stack([bs_real, bs_imag], dim=0)
+               
+        return source, target 
+    # target: signal 1Xtarget_len
+    # source: bs     2Xtarget_lenXtarget_len
+    def forward(self, target, method="average"):
+        batch_size = target.shape[0]
+        # Iterate over the batch dimension using indexing
+        if method == "sum":
+            source = torch.zeros(batch_size, self.targets_count, self.channels, self.height, self.width).to(self.device)
+      
+            for i in range(batch_size):
+                for j in range(self.targets_count):
+                    source[i][j], target[i][j] = self._create_data(target[i][j])
+        else: #average
+            source = torch.zeros(batch_size, self.channels, self.height, self.width).to(self.device)
+            s = torch.zeros(self.channels, self.height, self.width).to(self.device)
+            
+            for i in range(batch_size):
+                for j in range(self.targets_count):
+                    s, target[i][j] = self._create_data(target[i][j])
+                    source[i] += s.to(self.device)
+                source[i] /= self.targets_count            
+            #add for sum loss metric
+        return source, target  # Stack processed vectors
+
+
+
+class BatchAligneToReference(nn.Module):
+    def __init__(self, device):
+        super().__init__()
+        self._align = align_to_reference
+        self.device = device
+        
+    def forward(self, x, xref):
+        batch_size = x.shape[0]
+        signals_count = x.shape[1]
+        # Iterate over the batch dimension using indexing
+        x_aligned = torch.zeros_like(x).to(self.device)
+        inds = torch.zeros(batch_size, signals_count).to(self.device)
+        
+        for i in range(batch_size):
+            for j in range(signals_count):
+                x_aligned[i][j], inds[i][j] = \
+                    self._align(x[i][j], xref[i][j])
+        return x_aligned, inds  # Stack processed vectors
+    
+   
+def align_to_reference(x, xref):
+    """
+    Aligns a signal (x) to a reference signal (xref) using circular shift.
+    
+    Args:
+        x: A numpy array of the signal to be aligned.
+        xref: A numpy array of the reference signal.
+    
+    Returns:
+        A numpy array of the aligned signal.
+    """
+    
+    # Check if input arrays have the same size
+    assert x.shape == xref.shape, "x and xref must have identical size"
+    assert len(x.shape) == 1, "x shape is greater than 1 dim"
+    org_shape = x.shape
+    
+    # Reshape to column vectors
+    x = x.flatten()
+    xref = xref.flatten()
+    
+    # Compute FFTs
+    x_fft = torch.fft.fft(x)
+    xref_fft = torch.fft.fft(xref)
+    
+    # Compute correlation using inverse FFT of complex conjugate product
+    correlation_x_xref = torch.real(torch.fft.ifft(torch.conj(x_fft) * xref_fft))
+    
+    # Find index of maximum correlation
+    ind = torch.argmax(correlation_x_xref).item()
+    
+    # Perform circular shift
+    x_aligned = torch.roll(x, ind)
+    
+    return x_aligned.reshape(org_shape), ind
+           
+def rand_shift_signal(target, target_len, batch_size):
+    target = target.squeeze(1)
+    
+    shifts = np.random.randint(low=0, 
+                               high=target_len, 
+                               size=batch_size)
+    
+    rows, column_indices = np.ogrid[:target.shape[0], :target.shape[1]]
+
+    # Always use a negative shift, so that column_indices are valid.
+    #shifts[shifts < 0]= target.shape[1]
+    #shifts += target.shape[1]
+    column_indices = (column_indices + shifts[:, np.newaxis]) % target.shape[1]
+    
+    target = target[rows, column_indices]
+
+    target = target.unsqueeze(1)
+    
+    return target, shifts
+
+
