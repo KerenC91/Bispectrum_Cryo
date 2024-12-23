@@ -9,6 +9,7 @@ from utils.utils import BispectrumCalculator, rand_shift_signal, create_gaussian
 from models.model1 import CNNBS, HeadBS1
 from models.model2 import HeadBS2
 from models.model3 import HeadBS3
+from models.model4 import HeadBS4
 from config.hparams import hparams
 import numpy as np
 from trainer import Trainer
@@ -182,23 +183,32 @@ def update_reduce_height_cnt(k, s, Hin):
     
     return cnt, k, s, add_conv_2
     
+
 def get_model(device, args, is_distributed=False):
-    if args.model == 2:
-        head_class = HeadBS2
-        # channels = hparams.channels_model2
-    elif args.model == 3:
-        head_class = HeadBS3 
-        # channels = hparams.channels_model3
-    else:
-        head_class = HeadBS1
-        # channels = hparams.channels_model1
-    
     channels = args.channels
     args.pre_conv_channels[-1] = args.last_ch
     channels[-1] = args.last_ch
     cnt, k, s = args.reduce_height
     reduce_height = update_reduce_height_cnt(k, s, args.N)
     activation = set_activation(hparams.activation)
+    
+    if args.n_heads > 1:
+        model = get_model_multi_head(device, args, channels, reduce_height,
+                                 activation, is_distributed)
+    else:
+        model = get_model_simple(device, args, channels, reduce_height,
+                                 activation, is_distributed)
+    return model
+    
+def get_model_multi_head(device, args, channels, reduce_height,
+                         activation, is_distributed=False):
+    if args.model == 2:
+        head_class = HeadBS2
+    elif args.model == 3:
+        head_class = HeadBS3 
+    else:
+        head_class = HeadBS1
+    
     model = CNNBS(
         device=device,
         input_len=args.N,
@@ -215,7 +225,6 @@ def get_model(device, args, is_distributed=False):
         head_class = head_class,
         linear_ch=args.last_ch,
         activation=activation,
-        #
         window_size = args.window_size,
         img_size = args.img_size,
         patch_size = args.patch_size,
@@ -229,11 +238,40 @@ def get_model(device, args, is_distributed=False):
         norm_layer = args.norm_layer,
         downsample = args.downsample,
         resi_connection = args.resi_connection
-        #Add here!!! attention params
         )
     
     return model
 
+def get_model_simple(device, args, channels, reduce_height,
+                         activation, is_distributed=False):
+    return HeadBS4(
+        device=device,
+        input_len=args.N,
+        signals_count = args.K,
+        channels=channels,
+        pre_residuals=args.pre_residuals,
+        pre_conv_channels=args.pre_conv_channels,
+        up_residuals=args.up_residuals,
+        b_maxout = args.maxout,
+        post_residuals=args.post_residuals,
+        pow_2_channels=args.pow_2_channels,
+        reduce_height=reduce_height,
+        last_ch=args.last_ch,
+        activation=activation,
+        window_size = args.window_size,
+        img_size = args.img_size,
+        patch_size = args.patch_size,
+        depths = args.depths,
+        num_heads = args.num_heads,
+        qkv_bias = args.qkv_bias,
+        qk_scale = args.qk_scale,
+        drop = args.drop,
+        attn_drop = args.attn_drop,
+        drop_path_rate = args.drop_path_rate,
+        norm_layer = args.norm_layer,
+        downsample = args.downsample,
+        resi_connection = args.resi_connection
+        )
 
 def set_debug_args(args):
     args.N = hparams.debug_N				
@@ -279,12 +317,6 @@ def prepare_data_loader(dataset, batch_size, is_distributed=False):
     
     return dataloader
 
-def print_model_summary(args, model):
-    # Get model summary as a string
-    mid_layer ='maxout' if args.maxout == True else 'conv1'
-    print(f'mid_layer is {mid_layer}')
-    print(args)
-    print(hparams)
 
 def init(args):
 
@@ -430,7 +462,7 @@ def ddp_setup(rank, port, world_size):
     torch.cuda.set_device(device)
     
 def _train_impl(device, args, params, is_distributed=False):
-    # torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.benchmark = True
     # Set debug flag
     DEBUG = args.debug
     # Set wandb flag
