@@ -1,24 +1,14 @@
-#import tensorflow as tf
 import numpy as np
-import torch
 
 
 class HParams:
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
-    def __str__(self):
-        """Defines a string representation of the HParams object."""
-        param_strings = []
-        for attr, value in self.__dict__.items():
-            param_strings.append(f"{attr}: {value}")
-        return ", ".join(param_strings)
 
-# Example usage:
 hparams = HParams(
     #####################################
     # debug parameters
     #####################################
-    DEBUG = False,
     debug_model = 3,
     debug_N = 176,
     debug_last_ch = 128,# 8 for 1, 2,
@@ -137,7 +127,3 @@ hparams = HParams(
     norm_bs = False,
 )
 
-def hparams_debug_string():
-    values = hparams.values()
-    hp = ['  %s: %s' % (name, values[name]) for name in sorted(values)]
-    return 'Hyperparameters:\n' + '\n'.join(hp)

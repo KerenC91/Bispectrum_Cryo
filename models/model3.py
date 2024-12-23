@@ -89,7 +89,7 @@ class HeadBS3(nn.Module):
         self.norm = self.norm_layer(self.num_features)
         
         # Initialize learnable output factor
-        self.f = torch.nn.Parameter(torch.ones(1))
+        # self.f = torch.nn.Parameter(torch.ones(1))
 
         # Create pre_conv layer
         self.pre_conv = self._set_pre_conv_layers(bs_channels, 
