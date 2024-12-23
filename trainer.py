@@ -28,7 +28,8 @@ class Trainer:
                         folder_matlab,
                         folder_python,
                         start_epoch,
-                        args):
+                        args,
+                        is_distributed=False):
         self.device = device 
         self.train_loader = train_loader
         self.val_loader = val_loader
@@ -42,6 +43,9 @@ class Trainer:
         self.signals_count = args.K
         self.save_every = args.save_every
         self.model = model.to(self.device)
+        if is_distributed:
+            self.model = DDP(self.model, device_ids=[self.device])#, 
+                             # find_unused_parameters=True)
         self.wandb_flag = wandb_flag
         self.normalize = args.normalize
         self.mode = args.mode
@@ -71,6 +75,8 @@ class Trainer:
         self.plotting_off = args.plotting_off
         self.clip = args.clip_grad_norm
         self.loss_criterion = args.loss_criterion
+        self.is_master = (device == 0)
+        self.debug = args.debug
         
     def _loss(self, pred, target):
         total_loss = 0.
@@ -147,7 +153,7 @@ class Trainer:
             loss = torch.mean(
                         torch.norm((bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2))**2/ \
                             torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2))**2)
-            if hparams.DEBUG:
+            if self.debug:
                 if self.wandb_flag and \
                     (self.epoch == 1 or self.epoch % self.save_every == 0):
                     if (self.is_training):
@@ -155,14 +161,14 @@ class Trainer:
                         wandb.log({"bs_gt_norm_avg": torch.mean(torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2)))})
         else:
             loss = torch.norm(bs_pred - bs_gt)**2 / torch.norm(bs_gt)**2
-            if hparams.DEBUG:
+            if self.debug:
                 if self.wandb_flag and \
                     (self.epoch == 1 or self.epoch % self.save_every == 0):
                     if (self.is_training):
                         wandb.log({"bs_pred_minus_bs_gt_norm": torch.norm(bs_pred - bs_gt)})
                         wandb.log({"bs_gt_norm": torch.norm(bs_gt)})
         
-        if hparams.DEBUG:
+        if self.debug:
             if self.wandb_flag and \
                 (self.epoch == 1 or self.epoch % self.save_every == 0):
                 if (self.is_training):
@@ -286,7 +292,7 @@ class Trainer:
         || s - rec_s ||_1 / len(s)
 
         """  
-        if hparams.DEBUG:
+        if self.debug:
             if self.wandb_flag and \
                 (self.epoch == 1 or self.epoch % self.save_every == 0):
                 if (self.is_training):
@@ -597,68 +603,71 @@ class Trainer:
             # update lr
             last_lr = self.optimizer.param_groups[0]['lr']
 
-            # log loss with wandb
-            if self.wandb_flag and \
-                (self.epoch == 1 or self.epoch % self.save_every == 0):
-                wandb.log({"train_loss": train_loss})
-                wandb.log({"val_loss": val_loss})
-                wandb.log({"lr": self.optimizer.param_groups[0]['lr']})
-                if self.loss_mode == 'all':
-                    wandb.log({"train mse": train_mse_loss})
-                    wandb.log({"train relative mse": train_rel_mse_loss})
-                    wandb.log({"val mse": val_mse_loss})
-                    wandb.log({"val relative mse": val_rel_mse_loss})
-            # save checkpoint and log loss to cmd 
-            if self.epoch == 1 or self.epoch % self.save_every == 0:
-            # if self.epoch == 1 or self.epoch >= 3200:
-                print(f'-------Epoch {self.epoch}/{self.epochs}-------')
-                print(f'Total Train loss: {train_loss:.6f}')
-                print(f'Total Validation loss: {val_loss:.6f}')
-                if self.loss_mode == 'all':
-                    print(f'train mse loss: {train_mse_loss:.6f}')
-                    print(f'train relative mse loss: {train_rel_mse_loss:.6f}')
-                    print(f'val mse loss: {val_mse_loss:.6f}')
-                    print(f'val relative mse loss: {val_rel_mse_loss:.6f}')
-                if self.scheduler_name != 'None':
-                    print(f'lr: {last_lr}')
-                # save checkpoint
-                self._save_checkpoint()
-            # plot outputs on last epoch
-            if self.epoch == self.epochs and self.plotting_off == False:
-                if self.read_baseline != 0:
-                    if self.read_baseline == 1: # train
-                        self.write_python_test_results(self.train_dataset)
-                    elif self.read_baseline == 2:
-                        self.write_python_test_results(self.val_dataset)
+            if self.is_master:
+                # log loss with wandb
+                if self.wandb_flag and \
+                    (self.epoch == 1 or self.epoch % self.save_every == 0):
+                    wandb.log({"train_loss": train_loss})
+                    wandb.log({"val_loss": val_loss})
+                    wandb.log({"lr": self.optimizer.param_groups[0]['lr']})
+                    if self.loss_mode == 'all':
+                        wandb.log({"train mse": train_mse_loss})
+                        wandb.log({"train relative mse": train_rel_mse_loss})
+                        wandb.log({"val mse": val_mse_loss})
+                        wandb.log({"val relative mse": val_rel_mse_loss})
+                # save checkpoint and log loss to cmd 
+                if self.epoch == 1 or self.epoch % self.save_every == 0:
+                    print(f'-------Epoch {self.epoch}/{self.epochs}-------')
+                    print(f'Total Train loss: {train_loss:.6f}')
+                    print(f'Total Validation loss: {val_loss:.6f}')
+                    if self.loss_mode == 'all':
+                        print(f'train mse loss: {train_mse_loss:.6f}')
+                        print(f'train relative mse loss: {train_rel_mse_loss:.6f}')
+                        print(f'val mse loss: {val_mse_loss:.6f}')
+                        print(f'val relative mse loss: {val_rel_mse_loss:.6f}')
+                    if self.scheduler_name != 'None':
+                        print(f'lr: {last_lr}')
+                    # save checkpoint
+                    self._save_checkpoint()
+                # plot outputs on last epoch
+                if self.epoch == self.epochs and self.plotting_off == False:
+                    if self.read_baseline != 0:
+                        if self.read_baseline == 1: # train
+                            self.write_python_test_results(self.train_dataset)
+                        elif self.read_baseline == 2:
+                            self.write_python_test_results(self.val_dataset)
 
             # stop early if early_stopping is on
             if self.early_stopping:
                 if self.last_loss < train_loss:
                     self.es_cnt +=1
                     if self.es_cnt == hparams.early_stopping:
-                        print(f'Stooped at epoch {self.epoch}, after {self.es_cnt} times\n'
-                              f'last_loss={self.last_loss}, curr_los={train_loss}')
+                        if self.is_master:
+                            print(f'Stooped at epoch {self.epoch}, after {self.es_cnt} times\n'
+                                  f'last_loss={self.last_loss}, curr_los={train_loss}')
                         folder = f'figures/cnn_{self.suffix}'
                         break
             # stop if loss has reached lower bound
             if self.loss_mode == 'all' and train_mse_loss < hparams.loss_lim:
-                print(f'-------Epoch {self.epoch}/{self.epochs}-------')
-                print(f'Total Train loss: {train_loss:.6f}')
-                print(f'Total Validation loss: {val_loss:.6f}')
-                if self.loss_mode == 'all':
-                    print(f'train mse loss: {train_mse_loss:.6f}')
-                    print(f'train relative mse loss: {train_rel_mse_loss:.6f}')
-                    print(f'val mse loss: {val_mse_loss:.6f}')
-                    print(f'val relative mse loss: {val_rel_mse_loss:.6f}')
-                if self.scheduler_name != 'None':
-                    print(f'lr: {last_lr}')
-
-                print(f'Stooped at epoch {self.epoch},\n'
-                      f'curr_los={train_loss} < {hparams.loss_lim}')    
-                self.last_loss = train_loss
+                if self.is_master:
+                    print(f'-------Epoch {self.epoch}/{self.epochs}-------')
+                    print(f'Total Train loss: {train_loss:.6f}')
+                    print(f'Total Validation loss: {val_loss:.6f}')
+                    if self.loss_mode == 'all':
+                        print(f'train mse loss: {train_mse_loss:.6f}')
+                        print(f'train relative mse loss: {train_rel_mse_loss:.6f}')
+                        print(f'val mse loss: {val_mse_loss:.6f}')
+                        print(f'val relative mse loss: {val_rel_mse_loss:.6f}')
+                    if self.scheduler_name != 'None':
+                        print(f'lr: {last_lr}')
+    
+                    print(f'Stooped at epoch {self.epoch},\n'
+                          f'curr_los={train_loss} < {hparams.loss_lim}')    
+                    self.last_loss = train_loss
                 break
         
         # test
         with torch.no_grad():
             test_loss = self.test()
-            print(f'Test loss l1: {test_loss:.6f}')
+            if self.is_master:
+                print(f'Test loss l1: {test_loss:.6f}')

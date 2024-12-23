@@ -16,18 +16,24 @@ import sys
 from torch import nn
 from utils.compare_to_baseline import read_tensor_from_matlab
 import random 
+import torch.multiprocessing as mp
+from torch.distributed import init_process_group, destroy_process_group
+from torch.utils.data.distributed import DistributedSampler
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 #torch.set_printoptions(precision=15)
 #torch.set_default_dtype(torch.float64)
 # Set the same seed for reproducibility
+from config.hparams import hparams
 
 torch.manual_seed(234)
 
-
-                
+               
 
 class BispectrumDataset(Dataset):
     
     def __init__(self, source, target):
+        super().__init__()
         self.target = target
         self.source = source
         self.data_size = self.__len__()
@@ -80,7 +86,9 @@ def read_dataset_from_baseline(folder_matlab, data_size, K, N, label='x_true'):
     return target
    
 def create_dataset(device, data_size, K, N, read_baseline, mode, 
-                   folder_matlab, data_type, normalize=False):
+                   folder_matlab, data_type, normalize=False, is_distributed=False):
+    if is_distributed:
+        device='cpu'
     bs_calc = BispectrumCalculator(K, N, device).to(device)
     print(f'read_baseline={read_baseline}, mode={mode}')
     if read_baseline: # in val dataset
@@ -174,7 +182,7 @@ def update_reduce_height_cnt(k, s, Hin):
     
     return cnt, k, s, add_conv_2
     
-def get_model(device, args):
+def get_model(device, args, is_distributed=False):
     if args.model == 2:
         head_class = HeadBS2
         # channels = hparams.channels_model2
@@ -223,6 +231,7 @@ def get_model(device, args):
         resi_connection = args.resi_connection
         #Add here!!! attention params
         )
+    
     return model
 
 
@@ -257,13 +266,15 @@ def set_debug_args(args):
     return args
     
     
-def prepare_data_loader(dataset, batch_size):
+def prepare_data_loader(dataset, batch_size, is_distributed=False):
     
     dataloader = DataLoader(
         dataset=dataset,
         batch_size=batch_size,
-        pin_memory=False,
-        shuffle=False
+        sampler=DistributedSampler(dataset) if is_distributed else None,
+        pin_memory=is_distributed,
+        shuffle=False#,
+        #num_workers=os.cpu_count(),
     )
     
     return dataloader
@@ -313,6 +324,8 @@ def init(args):
     return folder_matlab, folder_python
 
 def set_optimizer(args, model):
+    
+    lr = args.lr * args.nprocs
     
     if args.optimizer == 'SGD':
         optimizer = torch.optim.SGD(model.parameters(), lr=args.lr,
@@ -370,7 +383,6 @@ def set_scheduler(scheduler_name, optimizer, epochs, len_trainloader):
                 optimizer=optimizer,
                 mode=hparams.cyclic_lr_mode,
                 base_lr=hparams.cyclic_lr_base_lr, 
-
                 max_lr=hparams.cyclic_lr_max_lr,
                 step_size_up=int(epochs * len_trainloader / 2 / hparams.cyclic_lr_step_size_up_f),
                 gamma=hparams.cyclic_lr_gamma) 
@@ -392,74 +404,97 @@ def update_suffix(args):
     
     return args
 
-def main(args):
+def train(args, params):
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(device)
     
+    _train_impl(0, args, params)
+
+def train_distributed(device, port, args, params):
+    # Apply ddp setup
+    ddp_setup(device, port, args.nprocs)
+
+    if device == 0:
+        print(f'running with {args.nprocs} gpus')
+    print(f'Using GPU {device}')    
+    
+    _train_impl(device, args, params, is_distributed=True)
+    
+    
+def ddp_setup(rank, port, world_size):
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = str(port)
+    init_process_group(backend="nccl", rank=rank, world_size=world_size)
+    device = torch.device('cuda', rank)
+    torch.cuda.set_device(device)
+    
+def _train_impl(device, args, params, is_distributed=False):
+    # torch.backends.cudnn.benchmark = True
     # Set debug flag
-    DEBUG = hparams.DEBUG
+    DEBUG = args.debug
     # Set wandb flag
     wandb_flag = args.wandb
     
     if DEBUG ==  True:
         args = set_debug_args(args)
-
+    
     args = update_suffix(args)
-
+    
     # Initialize wandb
-    run = None
-    if wandb_flag:
-        wandb.login()
-        if args.wandb_run_id == '':
-            run = wandb.init(project=args.wandb_proj_name,
-               	           name = f"{args.suffix}",
-               	           config=args)
-            wandb.log({"cmd_line": sys.argv})
-            wandb.save('hparams.py')
-            wandb.save("train_main.py")
-            wandb.save(f"model{args.model}.py")     
-        else: #resume run
-            run_id = args.wandb_run_id
-            resume_mode = "must"
-            run = wandb.init(project=args.wandb_proj_name, 
-                             id=run_id, 
-                             resume=resume_mode)
+    if device == 0:
+        run = None
+        if wandb_flag:
+            wandb.login()
+            if args.wandb_run_id == '':
+                run = wandb.init(project=args.wandb_proj_name,
+                   	           name = f"{args.suffix}",
+                   	           config=args)
+                wandb.log({"cmd_line": sys.argv})
+                wandb.save('hparams.py')
+                wandb.save("train_main.py")
+                wandb.save(f"model{args.model}.py")     
+            else: #resume run
+                run_id = args.wandb_run_id
+                resume_mode = "must"
+                run = wandb.init(project=args.wandb_proj_name, 
+                                 id=run_id, 
+                                 resume=resume_mode)
             
     # Initialize args
     folder_matlab, folder_python = init(args)
     # Initialize model and optimizer
-    model = get_model(device, args)
+    model = get_model(device, args, is_distributed)
     optimizer = set_optimizer(args, model)
     # print and save model
-    if args.log_level >= 2:
+    if device == 0 and args.log_level >= 2:
     	print(model)
-
+    
     # Set train dataset and dataloader
     print('Set train data')
     read_baseline_train = True if args.read_baseline == 1 else False
-
+    
     train_dataset = create_dataset(device, args.train_data_size, args.K, args.N,
                                    read_baseline_train, args.mode,
                                    folder_matlab, args.data_type, 
-                                   args.normalize)
-
-    train_loader = prepare_data_loader(train_dataset, args.batch_size)
+                                   args.normalize, is_distributed)
+    
+    train_loader = prepare_data_loader(train_dataset, args.batch_size, is_distributed)
     # Set validation dataset and dataloader 
     print('Set validation data')
     read_baseline_val = True if args.read_baseline == 2 else False
-
+    
     val_dataset = create_dataset(device, args.val_data_size, args.K, args.N,
                                  read_baseline_val, ['opt', 'none'],
                                  folder_matlab, args.data_type,
-                                 args.normalize)
+                                 args.normalize, is_distributed)
     
-    val_loader = prepare_data_loader(val_dataset, args.batch_size)
+    val_loader = prepare_data_loader(val_dataset, args.batch_size, is_distributed)
     
     scheduler = set_scheduler(args.scheduler, optimizer, args.epochs, len(train_loader))
     # if exists, load from checkpoint
     ckp_path = os.path.join(f'{folder_python}', 'ckp.pt')
-
+    
     if os.path.exists(ckp_path):
         print('checkpoint found')
         if args.run_mode == "override":
@@ -469,7 +504,12 @@ def main(args):
             print('loading checkpoint...')
             checkpoint = torch.load(ckp_path)
             epoch = checkpoint['epoch']
-            model.load_state_dict(checkpoint['model_state_dict'])
+            
+            if hasattr(model, 'module') and isinstance(model.module, nn.Module):
+                model.module.load_state_dict(checkpoint['model'])
+            else:
+                model.load_state_dict(checkpoint['model_state_dict'])
+
             model = model.to(device)
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             if args.scheduler != "None":
@@ -497,163 +537,16 @@ def main(args):
                       folder_matlab=folder_matlab,
                       folder_python=folder_python,
                       start_epoch=epoch,
-                      args=args)
+                      args=args,
+                      is_distributed=is_distributed)
+    if device == 0:
+        start_time = time.time()    
     
-    start_time = time.time()
     # Train and evaluate
     trainer.run()
-    end_time = time.time()
-        
-    print(f"Time taken to train in {os.path.basename(__file__)}:", 
-          end_time - start_time, "seconds")
-
-          
-if __name__ == "__main__":
-    # Add arguments to parser
-    parser = argparse.ArgumentParser(description='Inverting the bispectrum. Pulse dataset')
-
-    parser.add_argument('--N', type=int, default=10, metavar='N',
-            help='size of vector in the dataset')
-    parser.add_argument('--K', type=int, default=1, metavar='N',
-            help='Number of signals to reconstruct from')
-    parser.add_argument('--batch_size', type=int, default=1, metavar='N',
-            help='batch size')
-    parser.add_argument('--wandb_proj_name', type=str, default='BS_G_inv_multi_gpu', metavar='N',
-            help='wandb project name')
-    parser.add_argument('--save_every', type=int, default=100, metavar='N',
-            help='save checkpoint every <save_every> epoch')
-    parser.add_argument('--epochs', type=int, default=5000, metavar='N',
-            help='number of epochs to run')
-    parser.add_argument('--train_data_size', type=int, default=5000, metavar='N',
-            help='the size of the train data') 
-    parser.add_argument('--val_data_size', type=int, default=100, metavar='N',
-            help='the size of the validate data')  
-    parser.add_argument('--scheduler', type=str, default='None',
-            help='\'StepLR\', \'ReduceLROnPlateau\', \'OneCycleLR\','
-            ' \'CosineAnnealingLR\', \'CyclicLR\', \'Manual\'. '
-            'Update configurtion parametes accordingly. '
-            'default: \'None\' - no change in lr') 
-    parser.add_argument('--scheduler_from_start', action='store_true', 
-                        help='In case of loading from checkpoint, if set, start scheduler from scratch.'
-                        ' Else, resume scheduler from checkpoint.') 
-    parser.add_argument('--lr', type=float, default=3e-4, metavar='f',
-            help='learning rate (initial for dynamic lr, otherwise fixed)')     
-    parser.add_argument('--mode', type=str, nargs='+', default=['opt', None],
-            help= '[mode, add], mode in {\'rand\'\,\'opt\'}, add (optioanl) in {\'shift\', \'circular_shifts\'}'
-                '\'rand\': Create random data during training.\n'
-                    '\'opt\': Create a fixed dataset'
-                    '\'shift\': Randomly shift the signal.\n'
-                    '\'circular_shifts\': shift the signal circularly for every bbatch') 
-    parser.add_argument('--suffix', type=str, default='',
-            help='suffix to add to the name of the cnn yml file')  
-    parser.add_argument('--comp_test_name', type=str, default='',
-            help='test name') 
-    parser.add_argument('--comp_test_name_m', type=str, default='',
-            help='test name matlab') 
-    parser.add_argument('--log_level', type=int, default=0, 
-                        help='0: info, 1: warning, '
-                        '2: debug, 3: detailed debug')
-    ##---- model parameters
-    parser.add_argument('--n_heads', type=int, default=1, 
-                    help='number of cnn heads')
-    parser.add_argument('--model', type=int, default=3,  
-                        help='1 for CNNBS1 - reshape size to reduce dimension'
-                        ' 2 for CNNBS2 - strided convolution to reduce dimension')
-
-    parser.add_argument('--loss_mode', type=str, default="l1",  
-                        help='\'all\' - l1, mse, rel_mse. default: \'l1\' - l1 loss.'
-                        'Note: the training loss is always l1') 
-    parser.add_argument('--loss_method', type=str, default="average",  
-                        help='one of \'average\', \'sum\'.'
-                        'Note: the training loss is always l1') 
-    parser.add_argument('--read_baseline', type=int, default=0, 
-                        help='0: no action, 1: read from matlab to training set'
-                        '2: read from matlab to validation set')
-
-    #evaluates to False if not provided, else True
-    parser.add_argument('--wandb', action='store_true', 
-                        help='Log data using wandb') 
-    parser.add_argument('--wandb_run_id', type=str, default="",
-                        help='run id to resume running. If not provided - new run.') 
-    parser.add_argument('--maxout', action='store_true', 
-                        help='True for maxout in middle layer, False for conv1 (default)')
-    parser.add_argument('--pow_2_channels', action='store_true', 
-                        help='True for power of 2 channels, '
-                        'False for 1 layer with output channel of 8 (default)')
-    parser.add_argument('--normalize', action='store_true',
-                        help='normalizing data for True, else False (default)')
-    parser.add_argument('--early_stopping', action='store_true', 
-                        help='early stopping after early_stopping times. '
-                        'Update early_stopping in configuration') 
-    parser.add_argument('--plotting_off', action='store_true', 
-                        help='If set, do not plot data samples at the end. Can draw '
-                        'offline using saved checkpoint and initial samples.') 
-    parser.add_argument('--optimizer', type=str, default="AdamW",  
-                        help='The options are \"Adam\"\, \"SGD\"\, \"RMSprop\"\, \"AdamW\"\n'
-                        'Please update relevant parameters in parameters file.') 
-    parser.add_argument('--clip_grad_norm', type=float, default=0.,  
-                        help='If greater than 0: clip gradients norm with the clip_grad_norm value.') 
-    parser.add_argument('--run_mode', type=str, default="new", 
-                        help='one out of \"override\", \"resume\", \"new\" existing run '
-                        'eventhough a checkpoint exists') 
-    parser.add_argument('--data_type', type=str, default="normal_distribution", 
-                        help='one out of \"normal_distribution\", \"gaussian_pulse\". '
-                        'gaussian_pulse does not have baseline data to read from.') 
-    parser.add_argument('--loss_criterion', type=str, default="l1", 
-                        help='one out of \"l1\", \"mse\", \"sc\".') 
-    # model 
-    parser.add_argument('--pre_residuals', type=int, default=9, 
-                        help='pre residuals layers count')
-    parser.add_argument('--up_residuals', type=int, default=8, 
-                        help='up residuals layers count')
-    parser.add_argument('--post_residuals', type=int, default=2, 
-                        help='post residuals layers count')
-    parser.add_argument('--last_ch', type=int, default=256, 
-                        help='last_ch')
-    parser.add_argument('--channels', type=int, nargs='+', 
-                        default=[256, 8], 
-                        help='layer_channels list of values on each of heads. '
-                        'The default fits model3')
-    parser.add_argument('--pre_conv_channels', type=int, nargs='+', 
-                        default=[8, 32, 256], 
-                        help='layer_channels list of values on each of heads')
-    parser.add_argument('--reduce_height', type=int, nargs='+', default=[4, 3, 3], 
-                        help='relevant only for model2 - [count kernel stride] ' 
-                        'for reducing height in tensor: BXCXHXW to BXCX1XW')
-    # Swin Transformers params
-    parser.add_argument('--window_size', type=int, default=8, 
-                        help='window_size')    
-    parser.add_argument('--img_size', type=int, default=48, 
-                        help='img_size')#seems unused!!!
-    parser.add_argument('--patch_size', type=int, default=1, 
-                        help='patch size used in training SwinIR. '
-                            'Just used to differentiate two different settings in Table 2 of the paper. '
-                            'Images are NOT tested patch by patch.')    
-    # parser.add_argument('--embed_dim', type=int, default=128, 
-    #                     help='embed_dim') #This is exactly last ch
-    parser.add_argument('--depths', type=int, nargs='+', 
-                        default=[6, 6], 
-                        help='depths')    
-    parser.add_argument('--num_heads', type=int, nargs='+', 
-                        default=[2, 2], 
-                        help='num_heads')      
-    parser.add_argument('--qkv_bias', action='store_true', 
-                        help='') 
-    parser.add_argument('--qk_scale', action='store_true', 
-                        help='')     
-    parser.add_argument('--drop', type=float, default=0.,
-                        help='drop')
-    parser.add_argument('--attn_drop', type=float, default=0.,
-                        help='attn_drop')
-    parser.add_argument('--drop_path_rate', type=float, default=0.1,
-                        help='drop_path_rate')
-    parser.add_argument('--norm_layer',  action='store_false',
-                        help='norm_layer')
-    parser.add_argument('--downsample', action='store_true', 
-                        help='downsample')
-    parser.add_argument('--resi_connection', type=str, default='1conv',
-                        help='resi_connection')
-    # Parse arguments
-    args = parser.parse_args()
-
-    main(args)
+    
+    if device == 0:
+       	end_time = time.time()
+           
+        print(f"Time taken to train in {os.path.basename(__file__)}:", 
+              end_time - start_time, "seconds")
