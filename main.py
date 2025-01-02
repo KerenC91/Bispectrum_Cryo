@@ -17,9 +17,9 @@ def _get_free_port():
   with socketserver.TCPServer(('localhost', 0), None) as s:
     return s.server_address[1]
 
-
 def main(args):
   replica_count = args.nprocs
+
   if replica_count > 1:
     if args.batch_size % replica_count != 0:
       raise ValueError(f'Batch size {args.batch_size} is not evenly divisble by # GPUs {replica_count}.')
@@ -98,8 +98,8 @@ if __name__ == "__main__":
     
     parser.add_argument('--clip_grad_norm', type=float, default=0.,  
                         help='If greater than 0: clip gradients norm with the clip_grad_norm value.') 
-    parser.add_argument('--run_mode', type=str, default="new", 
-                        help='one out of \"override\", \"resume\", \"new\" existing run '
+    parser.add_argument('--run_mode', type=str, default="resume", 
+                        help='one out of \"override\", \"resume\", existing run '
                         'eventhough a checkpoint exists') 
     # model 
     parser.add_argument('--n_heads', type=int, default=1, 

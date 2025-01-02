@@ -42,10 +42,8 @@ class Trainer:
         self.target_len = args.N
         self.signals_count = args.K
         self.save_every = args.save_every
-        self.model = model.to(self.device)
-        if is_distributed:
-            self.model = DDP(self.model, device_ids=[self.device])#, 
-                             # find_unused_parameters=True)
+        self.model = model
+        self.is_distributed = is_distributed
         self.wandb_flag = wandb_flag
         self.normalize = args.normalize
         self.mode = args.mode
@@ -374,15 +372,22 @@ class Trainer:
             os.makedirs(self.folder_python)
         if self.scheduler_name != 'None':    
             torch.save({'epoch': self.epoch,
-                'model_state_dict': self.model.state_dict(),
+                'model_state_dict': 
+                    self.model.module.state_dict() if self.is_distributed 
+                    else self.model.state_dict(),
                 'optimizer_state_dict': self.optimizer.state_dict(),
                 'scheduler_state_dict': self.scheduler.state_dict()}, 
                 f'{self.folder_python}/ckp.pt')
         else:
             torch.save({'epoch': self.epoch,
-                'model_state_dict': self.model.state_dict(),
+                'model_state_dict': 
+                    self.model.module.state_dict() if self.is_distributed 
+                    else self.model.state_dict(),
                 'optimizer_state_dict': self.optimizer.state_dict()},
-                f'{self.folder_python}/ckp.pt')    
+                f'{self.folder_python}/ckp.pt')  
+        if self.wandb_flag:
+            wandb.save(f'{self.folder_python}/ckp.pt')
+            
         
     def _run_epoch_train(self):
         total_loss = 0

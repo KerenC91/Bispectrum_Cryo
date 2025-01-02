@@ -21,11 +21,11 @@ import torch.multiprocessing as mp
 from torch.distributed import init_process_group, destroy_process_group
 from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
 #torch.set_printoptions(precision=15)
 #torch.set_default_dtype(torch.float64)
 # Set the same seed for reproducibility
 from config.hparams import hparams
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 torch.manual_seed(234)
 
@@ -238,8 +238,9 @@ def get_model_multi_head(device, args, channels, reduce_height,
         norm_layer = args.norm_layer,
         downsample = args.downsample,
         resi_connection = args.resi_connection
-        )
+        ).to(device)
     
+    ddp_model = DDP(model, device_ids=[device])
     return model
 
 def get_model_simple(device, args, channels, reduce_height,
@@ -271,7 +272,7 @@ def get_model_simple(device, args, channels, reduce_height,
         norm_layer = args.norm_layer,
         downsample = args.downsample,
         resi_connection = args.resi_connection
-        )
+        ).to(device)
 
 def set_debug_args(args):
     args.N = hparams.debug_N				
@@ -316,44 +317,6 @@ def prepare_data_loader(dataset, batch_size, is_distributed=False):
     )
     
     return dataloader
-
-
-def init(args):
-
-    # Set folder to write test data to
-    folder_python = os.path.join('output', args.comp_test_name)
-    if not os.path.exists(folder_python):
-        if args.run_mode == "resume" or args.run_mode == "override":
-            print(f'Error! folder {folder_python} does not exist')
-            sys.exit(1)
-        else:#"new"
-            os.mkdir(folder_python)
-    else:
-        if len(os.listdir(folder_python)) > 0:
-            print(f'run {args.comp_test_name} already exists')
-            if args.run_mode == "new":
-                name_updated = False
-                for trial in range(5):
-                    random_number = random.randint(0, 50)
-                    if not os.path.exists(f'{folder_python}_{random_number}'):
-                        folder_python += f"_{random_number}"
-                        print(f'run name has been updated to {folder_python}')
-                        name_updated = True
-                        break
-                if name_updated == False:
-                    print(f'Error! Could not update run name {folder_python}')
-                    sys.exit(1)
-    if args.read_baseline:
-        # Set folder to read baseline data from
-        folder_matlab = os.path.join('data', args.comp_test_name_m)
-        if not os.path.exists(folder_matlab):
-            print('Error! folder_matlab does not exist\n'
-                  f'path={folder_matlab}')    
-            sys.exit(1)
-    else:
-        folder_matlab = ''
-        
-    return folder_matlab, folder_python
 
 def set_optimizer(args, model):
     
@@ -446,12 +409,29 @@ def train(args, params):
 def train_distributed(device, port, args, params):
     # Apply ddp setup
     ddp_setup(device, port, args.nprocs)
-
-    if device == 0:
-        print(f'running with {args.nprocs} gpus')
-    print(f'Using GPU {device}')    
     
+    print(f'Using GPU {device}')    
+
     _train_impl(device, args, params, is_distributed=True)
+
+
+def init(args):
+    # Set folder to write test data to
+    folder_python = os.path.join('output', args.comp_test_name)
+    # The folder does not exist
+    if not os.path.exists(folder_python):
+            os.mkdir(folder_python)
+
+    if args.read_baseline:
+        # Set folder to read baseline data from
+        folder_matlab = os.path.join('data', args.comp_test_name_m)
+        if not os.path.exists(folder_matlab):
+            raise ValueError('Error! folder_matlab does not exist\n'
+                  f'path={folder_matlab}')    
+    else:
+        folder_matlab = ''
+
+    return folder_matlab, folder_python
     
     
 def ddp_setup(rank, port, world_size):
@@ -492,9 +472,11 @@ def _train_impl(device, args, params, is_distributed=False):
                 run = wandb.init(project=args.wandb_proj_name, 
                                  id=run_id, 
                                  resume=resume_mode)
+            print(f'Running with {args.nprocs} GPUs')
             
     # Initialize args
     folder_matlab, folder_python = init(args)
+
     # Initialize model and optimizer
     model = get_model(device, args, is_distributed)
     optimizer = set_optimizer(args, model)
@@ -505,7 +487,7 @@ def _train_impl(device, args, params, is_distributed=False):
     # Set train dataset and dataloader
     print('Set train data')
     read_baseline_train = True if args.read_baseline == 1 else False
-    
+
     train_dataset = create_dataset(device, args.train_data_size, args.K, args.N,
                                    read_baseline_train, args.mode,
                                    folder_matlab, args.data_type, 
@@ -531,16 +513,18 @@ def _train_impl(device, args, params, is_distributed=False):
         print('checkpoint found')
         if args.run_mode == "override":
            epoch = 0 
-           print('override existing checkpoint')
+           print('Overriding existing checkpoint')
         elif args.run_mode == "resume":
-            print('loading checkpoint...')
-            checkpoint = torch.load(ckp_path)
+            print('Resuming existing run, loading checkpoint...')
+            if is_distributed:
+                # configure map_location properly
+                map_location = {'cuda:%d' % 0: 'cuda:%d' % device}
+                checkpoint = torch.load(ckp_path, map_location=map_location)
+            else:
+                checkpoint = torch.load(ckp_path)
             epoch = checkpoint['epoch']
             
-            if hasattr(model, 'module') and isinstance(model.module, nn.Module):
-                model.module.load_state_dict(checkpoint['model'])
-            else:
-                model.load_state_dict(checkpoint['model_state_dict'])
+            model.load_state_dict(checkpoint['model_state_dict'])
 
             model = model.to(device)
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
