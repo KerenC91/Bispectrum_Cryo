@@ -239,13 +239,12 @@ def get_model_multi_head(device, args, channels, reduce_height,
         downsample = args.downsample,
         resi_connection = args.resi_connection
         ).to(device)
-    
-    ddp_model = DDP(model, device_ids=[device])
+        
     return model
 
 def get_model_simple(device, args, channels, reduce_height,
                          activation, is_distributed=False):
-    return HeadBS4(
+    model = HeadBS4(
         device=device,
         input_len=args.N,
         signals_count = args.K,
@@ -273,6 +272,8 @@ def get_model_simple(device, args, channels, reduce_height,
         downsample = args.downsample,
         resi_connection = args.resi_connection
         ).to(device)
+        
+    return model
 
 def set_debug_args(args):
     args.N = hparams.debug_N				
@@ -406,10 +407,11 @@ def train(args, params):
     
     _train_impl(0, args, params)
 
-def train_distributed(device, port, args, params):
+def train_distributed(args, params):
     # Apply ddp setup
-    ddp_setup(device, port, args.nprocs)
+    ddp_setup()
     
+    device = int(os.environ["LOCAL_RANK"])
     print(f'Using GPU {device}')    
 
     _train_impl(device, args, params, is_distributed=True)
@@ -434,13 +436,13 @@ def init(args):
     return folder_matlab, folder_python
     
     
-def ddp_setup(rank, port, world_size):
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = str(port)
-    init_process_group(backend="nccl", rank=rank, world_size=world_size)
-    device = torch.device('cuda', rank)
+def ddp_setup():
+    device = int(os.environ["LOCAL_RANK"])
+    # device = torch.device('cuda', device)
     torch.cuda.set_device(device)
-    
+    init_process_group(backend="nccl", init_method="env://")
+
+
 def _train_impl(device, args, params, is_distributed=False):
     torch.backends.cudnn.benchmark = True
     # Set debug flag
@@ -519,6 +521,7 @@ def _train_impl(device, args, params, is_distributed=False):
             if is_distributed:
                 # configure map_location properly
                 map_location = {'cuda:%d' % 0: 'cuda:%d' % device}
+                # map_location=f"cuda:{device}"
                 checkpoint = torch.load(ckp_path, map_location=map_location)
             else:
                 checkpoint = torch.load(ckp_path)
@@ -526,7 +529,7 @@ def _train_impl(device, args, params, is_distributed=False):
             
             model.load_state_dict(checkpoint['model_state_dict'])
 
-            model = model.to(device)
+            # model = model.to(device)
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             if args.scheduler != "None":
                 if args.scheduler_from_start: 
@@ -538,6 +541,9 @@ def _train_impl(device, args, params, is_distributed=False):
                 sys.exit(1)
     else:#new
         epoch = 0
+    
+    if is_distributed:
+        model = DDP(model, device_ids=[device])
     # Initialize trainer
     trainer = Trainer(model=model, 
                       train_loader=train_loader, 

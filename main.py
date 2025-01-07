@@ -11,6 +11,7 @@ from torch.cuda import device_count
 import torch.multiprocessing as mp
 from config.hparams import hparams
 from train_main import train, train_distributed
+import os
 
 def _get_free_port():
   import socketserver
@@ -24,9 +25,7 @@ def main(args):
     if args.batch_size % replica_count != 0:
       raise ValueError(f'Batch size {args.batch_size} is not evenly divisble by # GPUs {replica_count}.')
     args.batch_size = args.batch_size // replica_count
-    port = _get_free_port()
-    # mp.spawn(train_distributed, args=(args,), nprocs=replica_count)#, join=True)
-    mp.spawn(train_distributed, args=(port, args, hparams), nprocs=replica_count)#, join=True)
+    train_distributed(args, hparams)
   else:
     if torch.cuda.is_available():
         print("Running with a single GPU")

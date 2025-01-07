@@ -370,24 +370,18 @@ class Trainer:
     def _save_checkpoint(self):
         if not os.path.exists(self.folder_python):
             os.makedirs(self.folder_python)
-        if self.scheduler_name != 'None':    
-            torch.save({'epoch': self.epoch,
-                'model_state_dict': 
-                    self.model.module.state_dict() if self.is_distributed 
-                    else self.model.state_dict(),
-                'optimizer_state_dict': self.optimizer.state_dict(),
-                'scheduler_state_dict': self.scheduler.state_dict()}, 
-                f'{self.folder_python}/ckp.pt')
-        else:
-            torch.save({'epoch': self.epoch,
-                'model_state_dict': 
-                    self.model.module.state_dict() if self.is_distributed 
-                    else self.model.state_dict(),
-                'optimizer_state_dict': self.optimizer.state_dict()},
-                f'{self.folder_python}/ckp.pt')  
+        torch.save({'epoch': self.epoch,
+            'model_state_dict': 
+                self.model.module.state_dict() if self.is_distributed 
+                else self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': None if self.scheduler is None
+                else self.scheduler.state_dict()}, 
+            f'{self.folder_python}/ckp.pt')
+ 
         if self.wandb_flag:
             wandb.save(f'{self.folder_python}/ckp.pt')
-            
+          
         
     def _run_epoch_train(self):
         total_loss = 0
