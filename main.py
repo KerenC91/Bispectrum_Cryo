@@ -13,13 +13,13 @@ from config.hparams import hparams
 from train_main import train, train_distributed
 import os
 
-def _get_free_port():
-  import socketserver
-  with socketserver.TCPServer(('localhost', 0), None) as s:
-    return s.server_address[1]
+def is_torchrun():
+    if 'LOCAL_RANK' in os.environ:
+        return True
+    return False
 
 def main(args):
-  replica_count = args.nprocs
+  replica_count = args.nprocs if is_torchrun() else 1
 
   if replica_count > 1:
     if args.batch_size % replica_count != 0:
