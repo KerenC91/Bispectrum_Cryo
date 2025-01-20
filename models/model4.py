@@ -212,7 +212,9 @@ class HeadBS4(nn.Module):
         # for BXCXHXW reduce dimension to BXCX1XW
         x = self.reduce_height(x)
         x = x.squeeze(2)
+        # x *= self.f
         x = self.post_conv(x)  
+        # x *= self.f
         x = self.linear(x.transpose(1, 2))
         x = self.act_fn(x).transpose(2, 1)
 

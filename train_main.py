@@ -27,7 +27,7 @@ import torch.distributed as dist
 from config.hparams import hparams
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-torch.manual_seed(234)
+# torch.manual_seed(234)
 
                
 
@@ -543,7 +543,7 @@ def _train_impl(device, args, params, is_distributed=False):
         epoch = 0
     
     if is_distributed:
-        model = DDP(model, device_ids=[device])
+        model = DDP(model, device_ids=[device], find_unused_parameters=True)
     # Initialize trainer
     trainer = Trainer(model=model, 
                       train_loader=train_loader, 

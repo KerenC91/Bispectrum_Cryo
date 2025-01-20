@@ -75,6 +75,7 @@ class Trainer:
         self.loss_criterion = args.loss_criterion
         self.is_master = (device == 0)
         self.debug = args.debug
+        self.log_level = args.log_level
         
     def _loss(self, pred, target):
         total_loss = 0.
@@ -151,7 +152,7 @@ class Trainer:
             loss = torch.mean(
                         torch.norm((bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2))**2/ \
                             torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2))**2)
-            if self.debug:
+            if self.log_level == 3:
                 if self.wandb_flag and \
                     (self.epoch == 1 or self.epoch % self.save_every == 0):
                     if (self.is_training):
@@ -159,14 +160,14 @@ class Trainer:
                         wandb.log({"bs_gt_norm_avg": torch.mean(torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2)))})
         else:
             loss = torch.norm(bs_pred - bs_gt)**2 / torch.norm(bs_gt)**2
-            if self.debug:
+            if self.log_level == 3:
                 if self.wandb_flag and \
                     (self.epoch == 1 or self.epoch % self.save_every == 0):
                     if (self.is_training):
                         wandb.log({"bs_pred_minus_bs_gt_norm": torch.norm(bs_pred - bs_gt)})
                         wandb.log({"bs_gt_norm": torch.norm(bs_gt)})
         
-        if self.debug:
+        if self.log_level == 3:
             if self.wandb_flag and \
                 (self.epoch == 1 or self.epoch % self.save_every == 0):
                 if (self.is_training):
@@ -290,7 +291,7 @@ class Trainer:
         || s - rec_s ||_1 / len(s)
 
         """  
-        if self.debug:
+        if self.log_level == 3:
             if self.wandb_flag and \
                 (self.epoch == 1 or self.epoch % self.save_every == 0):
                 if (self.is_training):
@@ -308,7 +309,8 @@ class Trainer:
         # Forward pass
         output = self.model(source) # reconstructed signal
         #if (not self.is_training) or (self.is_training and self.loss_method == 'sum'):
-        output = self._switch_position(output, target)
+        if self.signals_count > 1:
+            output = self._switch_position(output, target)
         # if not self.is_training:
         #     output, _ = self.aligner(output, target)
              
@@ -344,7 +346,8 @@ class Trainer:
         # Forward pass
         output = self.model(source) # reconstructed signal
         #if self.loss_method == 'sum':
-        output = self._switch_position(output, target)
+        if self.signals_count > 1:
+            output = self._switch_position(output, target)
         
         # Loss calculation
         loss = self.loss_f(output, target)
@@ -380,7 +383,7 @@ class Trainer:
             f'{self.folder_python}/ckp.pt')
  
         if self.wandb_flag:
-            wandb.save(f'{self.folder_python}/ckp.pt')
+            wandb.save(f'{self.folder_python}/ckp.pt', base_path=f'{self.folder_python}')
           
         
     def _run_epoch_train(self):
@@ -553,7 +556,8 @@ class Trainer:
             source = source.to(self.device)
             # Forward pass
             pred = self.model(source) # reconstructed signal
-            pred = self._switch_position(pred, target)
+            if self.signals_count > 1:
+                pred = self._switch_position(pred, target)
             pred, _ = self.aligner(pred, target)
                 
             self.save_python_test_data(idx.item(), pred, target)
