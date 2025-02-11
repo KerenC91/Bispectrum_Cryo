@@ -26,6 +26,7 @@ import torch.distributed as dist
 # Set the same seed for reproducibility
 from config.hparams import hparams
 from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.nn.functional as F
 
 # torch.manual_seed(234)
 
@@ -87,7 +88,7 @@ def read_dataset_from_baseline(folder_matlab, data_size, K, N, label='x_true'):
     return target
    
 def create_dataset(device, data_size, K, N, read_baseline, mode, 
-                   folder_matlab, data_type, normalize=False, is_distributed=False):
+                   folder_matlab, data_type, window_size, normalize=False, is_distributed=False):
     if is_distributed:
         device='cpu'
     bs_calc = BispectrumCalculator(K, N, device).to(device)
@@ -122,6 +123,11 @@ def create_dataset(device, data_size, K, N, read_baseline, mode,
         target = target.type(torch.float32)
     target.to(device)
     source, target = bs_calc(target)
+    # if N % window_size != 0:
+    #     pdb.set_trace()
+    #     padding = (window_size - (N % window_size)) % window_size
+    #     source = F.pad(target, (0, padding, 0, padding))
+    #     print(f"Padding the bispectrum with {padding}")
     if mode[0] == 'opt' and mode[1] == 'shift' and not read_baseline:
             target, shifts = rand_shift_signal(target, K, N, data_size)
     dataset = BispectrumDataset(source, target)
@@ -321,7 +327,7 @@ def prepare_data_loader(dataset, batch_size, is_distributed=False):
 
 def set_optimizer(args, model):
     
-    lr = args.lr * args.nprocs
+    args.lr = args.lr * args.nprocs
     
     if args.optimizer == 'SGD':
         optimizer = torch.optim.SGD(model.parameters(), lr=args.lr,
@@ -345,7 +351,7 @@ def set_optimizer(args, model):
     return optimizer
 
 
-def set_scheduler(scheduler_name, optimizer, epochs, len_trainloader):
+def set_scheduler(scheduler_name, optimizer, epochs, lr, len_trainloader):
     scheduler = None
     if scheduler_name != 'None':
         if scheduler_name == 'ReduceLROnPlateau':
@@ -364,7 +370,8 @@ def set_scheduler(scheduler_name, optimizer, epochs, len_trainloader):
         elif scheduler_name == 'OneCycleLR':
             scheduler = optim.lr_scheduler.OneCycleLR(
                 optimizer=optimizer,
-                max_lr=hparams.cyc_lr_max_lr,
+                max_lr=lr,
+                div_factor=hparams.cyc_lr_div_factor,
                 steps_per_epoch=len_trainloader,
                 epochs=epochs,
                 pct_start=hparams.cyc_lr_pct_start,
@@ -379,7 +386,7 @@ def set_scheduler(scheduler_name, optimizer, epochs, len_trainloader):
                 optimizer=optimizer,
                 mode=hparams.cyclic_lr_mode,
                 base_lr=hparams.cyclic_lr_base_lr, 
-                max_lr=hparams.cyclic_lr_max_lr,
+                max_lr=lr,
                 step_size_up=int(epochs * len_trainloader / 2 / hparams.cyclic_lr_step_size_up_f),
                 gamma=hparams.cyclic_lr_gamma) 
 
@@ -493,6 +500,7 @@ def _train_impl(device, args, params, is_distributed=False):
     train_dataset = create_dataset(device, args.train_data_size, args.K, args.N,
                                    read_baseline_train, args.mode,
                                    folder_matlab, args.data_type, 
+                                   args.window_size, 
                                    args.normalize, is_distributed)
     
     train_loader = prepare_data_loader(train_dataset, args.batch_size, is_distributed)
@@ -507,7 +515,7 @@ def _train_impl(device, args, params, is_distributed=False):
     
     val_loader = prepare_data_loader(val_dataset, args.batch_size, is_distributed)
     
-    scheduler = set_scheduler(args.scheduler, optimizer, args.epochs, len(train_loader))
+    scheduler = set_scheduler(args.scheduler, optimizer, args.epochs, args.lr, len(train_loader))
     # if exists, load from checkpoint
     ckp_path = os.path.join(f'{folder_python}', 'ckp.pt')
     
@@ -533,7 +541,7 @@ def _train_impl(device, args, params, is_distributed=False):
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             if args.scheduler != "None":
                 if args.scheduler_from_start: 
-                    scheduler = set_scheduler(args.scheduler, optimizer, args.epochs - epoch, len(train_loader))
+                    scheduler = set_scheduler(args.scheduler, optimizer, args.epochs - epoch, args.lr, len(train_loader))
                 else:
                     scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
             if epoch >= args.epochs:

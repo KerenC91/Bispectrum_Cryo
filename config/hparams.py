@@ -46,7 +46,7 @@ hparams = HParams(
     reduce_lr_mode='min',
     reduce_lr_factor = 0.1,
     reduce_lr_threshold = 1e-3,
-    reduce_lr_patience = 0,
+    reduce_lr_patience = 3,
     reduce_lr_cooldown = 0,
 
     # StepLR - every step_size epochs decrease by lr gamma factor
@@ -55,10 +55,11 @@ hparams = HParams(
     
     # OneCycleLR - perform one cycle of learning. 
     # epochs and steps per epochs are defined in the code
-    cyc_lr_max_lr = 1e-2,
+    # cyc_lr_max_lr = 1e-2,
     cyc_lr_pct_start = 0.562,
     cyc_lr_anneal_strategy = 'cos',
     cyc_lr_three_pahse= True,
+    cyc_lr_div_factor = 16,#25
 	#"cyc_lr_epochs": num_epochs,
 	#"cyc_lr_steps_per_epoch": len(train_loader),
     
@@ -70,8 +71,8 @@ hparams = HParams(
     # CyclicLR
     # cyclic_lr_step_size_up = int(num_epochs * len(train_loader) / 2 / cyclic_lr_step_size_up_f)
     # Performs cyclic_lr_step_size_up_f traingle periods
-    cyclic_lr_base_lr=1e-6, 
-    cyclic_lr_max_lr=1e-2,
+    cyclic_lr_base_lr=1e-4, 
+    # cyclic_lr_max_lr=1e-2,
     cyclic_lr_mode="triangular",
     cyclic_lr_step_size_up_f=3,
     cyclic_lr_gamma=1,
@@ -118,7 +119,7 @@ hparams = HParams(
     ##########################
     # additional params
     ##########################
-    early_stopping = 1,
+    early_stopping = 10,
     dbg_draw_rate=100,
     loss_lim = 1e-6,
     # comparison with baseline

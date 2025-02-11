@@ -19,19 +19,22 @@ def is_torchrun():
     return False
 
 def main(args):
-  replica_count = args.nprocs if is_torchrun() else 1
-
-  if replica_count > 1:
-    if args.batch_size % replica_count != 0:
-      raise ValueError(f'Batch size {args.batch_size} is not evenly divisble by # GPUs {replica_count}.')
-    args.batch_size = args.batch_size // replica_count
-    train_distributed(args, hparams)
-  else:
-    if torch.cuda.is_available():
-        print("Running with a single GPU")
+    replica_count = args.nprocs if is_torchrun() else 1
+    
+    if args.N % args.window_size != 0:
+        raise ValueError(f'Signal size {args.N} is not evenly divisble by window size {args.window_size}. ' 
+                         f'Please choose a suitable window size.')
+    if replica_count > 1:
+        if args.batch_size % replica_count != 0:
+            raise ValueError(f'Batch size {args.batch_size} is not evenly divisble by # GPUs {replica_count}.')
+        args.batch_size = args.batch_size // replica_count
+        train_distributed(args, hparams)
     else:
-        print("GPU is not available, using CPU")
-    train(args, hparams)
+        if torch.cuda.is_available():
+            print("Running with a single GPU")
+        else:
+            print("GPU is not available, using CPU")
+        train(args, hparams)
 
 
 if __name__ == "__main__":
@@ -105,7 +108,8 @@ if __name__ == "__main__":
                     help='number of cnn heads')
     parser.add_argument('--model', type=int, default=3,  
                         help='1 for CNNBS1 - reshape size to reduce dimension'
-                        ' 2 for CNNBS2 - strided convolution to reduce dimension')
+                        ' 2 for CNNBS2 - strided convolution to reduce dimension'
+                        '3, 4, 5 with transformers')
     parser.add_argument('--pre_residuals', type=int, default=9, 
                         help='pre residuals layers count')
     parser.add_argument('--up_residuals', type=int, default=8, 
@@ -122,7 +126,7 @@ if __name__ == "__main__":
                         default=[8, 32, 256], 
                         help='layer_channels list of values on each of heads')
     parser.add_argument('--reduce_height', type=int, nargs='+', default=[4, 3, 3], 
-                        help='relevant only for model2 - [count kernel stride] ' 
+                        help='[count kernel stride] ' 
                         'for reducing height in tensor: BXCXHXW to BXCX1XW')
     # 
     parser.add_argument('--maxout', action='store_true', 
@@ -134,7 +138,7 @@ if __name__ == "__main__":
     parser.add_argument('--window_size', type=int, default=8, 
                         help='window_size')    
     parser.add_argument('--img_size', type=int, default=48, 
-                        help='window_size')  
+                        help='for patches. unused.')  
     parser.add_argument('--patch_size', type=int, default=1, 
                         help='patch size used in training SwinIR. '
                             'Just used to differentiate two different settings in Table 2 of the paper. '
@@ -183,5 +187,7 @@ if __name__ == "__main__":
     # distributed training
     parser.add_argument('--nprocs', default=torch.cuda.device_count(), type=int, 
                         help='nprocs, default is the number of available gpus on the machine')
+    
     args = parser.parse_args()
+
     main(args)

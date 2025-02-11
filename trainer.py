@@ -49,7 +49,7 @@ class Trainer:
         self.mode = args.mode
         self.start_epoch = start_epoch
         self.epoch = 0
-        self.last_loss = torch.inf
+        self.prev_val_loss = torch.inf
         self.early_stopping = args.early_stopping
         self.es_cnt = 0
         self.suffix = args.suffix
@@ -76,6 +76,8 @@ class Trainer:
         self.is_master = (device == 0)
         self.debug = args.debug
         self.log_level = args.log_level
+        self.prev_ckp_val_loss = torch.inf
+        
         
     def _loss(self, pred, target):
         total_loss = 0.
@@ -309,6 +311,9 @@ class Trainer:
         # Forward pass
         output = self.model(source) # reconstructed signal
         #if (not self.is_training) or (self.is_training and self.loss_method == 'sum'):
+        # if self.target_len % self.window_size != 0:
+        #     padding = (self.window_size - (N % self.window_size)) % self.window_size
+        #     output = output[:,:,:(self.target_len - padding + 1)]
         if self.signals_count > 1:
             output = self._switch_position(output, target)
         # if not self.is_training:
@@ -345,6 +350,9 @@ class Trainer:
         source = source.to(self.device)
         # Forward pass
         output = self.model(source) # reconstructed signal
+        # if self.target_len % self.window_size != 0:
+        #     padding = (self.window_size - (N % self.window_size)) % self.window_size
+        #     output = output[:,:,:(self.target_len - padding + 1)]
         #if self.loss_method == 'sum':
         if self.signals_count > 1:
             output = self._switch_position(output, target)
@@ -429,7 +437,7 @@ class Trainer:
         total_loss = 0
         total_mse_loss = 0
         total_mse_norm_loss = 0
-        
+        # pdb.set_trace()
         for idx, (sources, targets) in self.train_loader:
             # zero grads
             self.optimizer.zero_grad()
@@ -631,7 +639,11 @@ class Trainer:
                     if self.scheduler_name != 'None':
                         print(f'lr: {last_lr}')
                     # save checkpoint
-                    self._save_checkpoint()
+                    if val_loss < self.prev_ckp_val_loss: 
+                        self._save_checkpoint()
+                    else:
+                        print('New checkpoint is worse. Keeping the previous one.')
+                    self.prev_ckp_val_loss = val_loss
                 # plot outputs on last epoch
                 if self.epoch == self.epochs and self.plotting_off == False:
                     if self.read_baseline != 0:
@@ -640,34 +652,37 @@ class Trainer:
                         elif self.read_baseline == 2:
                             self.write_python_test_results(self.val_dataset)
 
-            # stop early if early_stopping is on
-            if self.early_stopping:
-                if self.last_loss < train_loss:
-                    self.es_cnt +=1
-                    if self.es_cnt == hparams.early_stopping:
-                        if self.is_master:
-                            print(f'Stooped at epoch {self.epoch}, after {self.es_cnt} times\n'
-                                  f'last_loss={self.last_loss}, curr_los={train_loss}')
-                        folder = f'figures/cnn_{self.suffix}'
-                        break
-            # stop if loss has reached lower bound
-            if self.loss_mode == 'all' and train_mse_loss < hparams.loss_lim:
-                if self.is_master:
-                    print(f'-------Epoch {self.epoch}/{self.epochs}-------')
-                    print(f'Total Train loss: {train_loss:.6f}')
-                    print(f'Total Validation loss: {val_loss:.6f}')
-                    if self.loss_mode == 'all':
-                        print(f'train mse loss: {train_mse_loss:.6f}')
-                        print(f'train relative mse loss: {train_rel_mse_loss:.6f}')
-                        print(f'val mse loss: {val_mse_loss:.6f}')
-                        print(f'val relative mse loss: {val_rel_mse_loss:.6f}')
-                    if self.scheduler_name != 'None':
-                        print(f'lr: {last_lr}')
+                # stop early if early_stopping is on
+                if self.early_stopping:
+                    if self.prev_val_loss < val_loss:
+                        self.es_cnt +=1
+                        if self.es_cnt == hparams.early_stopping:
+                            if self.is_master:
+                                print(f'Stooped at epoch {self.epoch}, after {self.es_cnt} times\n'
+                                      f'prev_val_loss={self.prev_val_loss}, curr_los={train_loss}')
+                            break
+                        
+                # early stopping - stop early if early_stopping is on
+                if self.early_stopping:
+                    if self.prev_val_loss < val_loss:
+                        self.es_cnt += 1
+                    else:
+                        self.es_cnt = 0  # Reset counter if performance improves
     
-                    print(f'Stooped at epoch {self.epoch},\n'
-                          f'curr_los={train_loss} < {hparams.loss_lim}')    
-                    self.last_loss = train_loss
-                break
+                    if self.es_cnt == hparams.early_stopping:
+                        print(f'Stopped at epoch {self.epoch}, after {self.es_cnt} times\n'
+                              f'prev_val_loss={self.prev_val_loss}, curr_loss={train_loss}')
+                        
+                        if self.is_distributed:
+                            # Signal all processes to terminate
+                            torch.distributed.barrier()
+                            torch.distributed.destroy_process_group()
+                        sys.exit(0)  # Ensure all processes terminate cleanly
+                self.prev_val_loss = val_loss
+            
+            if self.early_stopping and self.is_distributed:
+                torch.distributed.barrier()
+                
         
         # test
         with torch.no_grad():
