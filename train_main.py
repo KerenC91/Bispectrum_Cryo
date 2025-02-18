@@ -10,6 +10,7 @@ from models.model1 import CNNBS, HeadBS1
 from models.model2 import HeadBS2
 from models.model3 import HeadBS3
 from models.model4 import HeadBS4
+from models.model5 import HeadBS5
 from config.hparams import hparams
 import numpy as np
 from trainer import Trainer
@@ -190,7 +191,7 @@ def update_reduce_height_cnt(k, s, Hin):
     return cnt, k, s, add_conv_2
     
 
-def get_model(device, args, is_distributed=False):
+def get_model(device, args, is_distributed=False, use_transformers=True):
     channels = args.channels
     args.pre_conv_channels[-1] = args.last_ch
     channels[-1] = args.last_ch
@@ -203,7 +204,7 @@ def get_model(device, args, is_distributed=False):
                                  activation, is_distributed)
     else:
         model = get_model_simple(device, args, channels, reduce_height,
-                                 activation, is_distributed)
+                                 activation, is_distributed, use_transformers)
     return model
     
 def get_model_multi_head(device, args, channels, reduce_height,
@@ -249,36 +250,53 @@ def get_model_multi_head(device, args, channels, reduce_height,
     return model
 
 def get_model_simple(device, args, channels, reduce_height,
-                         activation, is_distributed=False):
-    model = HeadBS4(
-        device=device,
-        input_len=args.N,
-        signals_count = args.K,
-        channels=channels,
-        pre_residuals=args.pre_residuals,
-        pre_conv_channels=args.pre_conv_channels,
-        up_residuals=args.up_residuals,
-        b_maxout = args.maxout,
-        post_residuals=args.post_residuals,
-        pow_2_channels=args.pow_2_channels,
-        reduce_height=reduce_height,
-        last_ch=args.last_ch,
-        activation=activation,
-        window_size = args.window_size,
-        img_size = args.img_size,
-        patch_size = args.patch_size,
-        depths = args.depths,
-        num_heads = args.num_heads,
-        qkv_bias = args.qkv_bias,
-        qk_scale = args.qk_scale,
-        drop = args.drop,
-        attn_drop = args.attn_drop,
-        drop_path_rate = args.drop_path_rate,
-        norm_layer = args.norm_layer,
-        downsample = args.downsample,
-        resi_connection = args.resi_connection
-        ).to(device)
-        
+                         activation, is_distributed=False, use_transformers=True):
+    
+    if use_transformers:
+        model = HeadBS4(
+            device=device,
+            input_len=args.N,
+            signals_count = args.K,
+            channels=channels,
+            pre_residuals=args.pre_residuals,
+            pre_conv_channels=args.pre_conv_channels,
+            up_residuals=args.up_residuals,
+            b_maxout = args.maxout,
+            post_residuals=args.post_residuals,
+            pow_2_channels=args.pow_2_channels,
+            reduce_height=reduce_height,
+            last_ch=args.last_ch,
+            activation=activation,
+            window_size = args.window_size,
+            img_size = args.img_size,
+            patch_size = args.patch_size,
+            depths = args.depths,
+            num_heads = args.num_heads,
+            qkv_bias = args.qkv_bias,
+            qk_scale = args.qk_scale,
+            drop = args.drop,
+            attn_drop = args.attn_drop,
+            drop_path_rate = args.drop_path_rate,
+            norm_layer = args.norm_layer,
+            downsample = args.downsample,
+            resi_connection = args.resi_connection
+            ).to(device)
+    else:
+        model = HeadBS5(
+            device=device,
+            input_len=args.N,
+            signals_count = args.K,
+            channels=channels,
+            pre_residuals=args.pre_residuals,
+            pre_conv_channels=args.pre_conv_channels,
+            up_residuals=args.up_residuals,
+            b_maxout = args.maxout,
+            post_residuals=args.post_residuals,
+            pow_2_channels=args.pow_2_channels,
+            reduce_height=reduce_height,
+            last_ch=args.last_ch,
+            activation=activation
+            ).to(device)        
     return model
 
 def set_debug_args(args):
@@ -310,7 +328,21 @@ def set_debug_args(args):
     args.K = hparams.debug_K
     args.loss_method = hparams.debug_loss_method
     return args
+
+def load_model_safely(model, checkpoint_path):
+    # Load the checkpoint
+    state_dict = torch.load(checkpoint_path)
     
+    try:
+        # Try loading with strict=True (default behavior)
+        model.load_state_dict(state_dict['model_state_dict'])
+    except RuntimeError as e:
+        print("⚠️ Warning: Model loading failed due to unexpected/missing keys.")
+        print("Retrying with strict=False...")
+        
+        # Retry with strict=False to ignore mismatched keys
+        model.load_state_dict(state_dict['model_state_dict'], strict=False)
+        print("Model loaded successfully with strict=False.")    
     
 def prepare_data_loader(dataset, batch_size, is_distributed=False):
     
@@ -476,10 +508,9 @@ def _train_impl(device, args, params, is_distributed=False):
                 wandb.save("train_main.py")
                 wandb.save(f"model{args.model}.py")     
             else: #resume run
-                run_id = args.wandb_run_id
                 resume_mode = "must"
                 run = wandb.init(project=args.wandb_proj_name, 
-                                 id=run_id, 
+                                 id=args.wandb_run_id, 
                                  resume=resume_mode)
             print(f'Running with {args.nprocs} GPUs')
             
@@ -577,6 +608,7 @@ def _train_impl(device, args, params, is_distributed=False):
     
     if device == 0:
        	end_time = time.time()
-           
+        if wandb_flag:
+            np.savetxt(f'{folder_python}/wandb_run_id.csv', [wandb.run.id], fmt='%s')    
         print(f"Time taken to train in {os.path.basename(__file__)}:", 
               end_time - start_time, "seconds")

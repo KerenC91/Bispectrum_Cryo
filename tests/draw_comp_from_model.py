@@ -7,88 +7,47 @@ Created on Sun Jul  7 18:46:07 2024
 """
 
 import os
+
+
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
+import sys
+
+sys.path.append(parent_dir)
+sys.path.append(f'{parent_dir}/config')
+
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 import argparse
-from utils import clculate_bispectrum_efficient, align_to_reference, BatchAligneToReference, BispectrumCalculator
-from train_main import get_model, read_org, read_dataset_from_baseline, create_dataset
-from compare_to_baseline import read_tensor_from_matlab
+from utils.utils import clculate_bispectrum_efficient, align_to_reference, BatchAligneToReference, BispectrumCalculator
+from train_main import get_model, read_org, read_dataset_from_baseline, create_dataset, load_model_safely
+from utils.compare_to_baseline import read_tensor_from_matlab
 from hparams import hparams
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
+from draw_comp_params import draw_comp_params, draw_comp_args
+# torch.manual_seed(234)
 
-torch.manual_seed(234)
-
-# Parse args
-parser = argparse.ArgumentParser(description='Inverting the bispectrum. Pulse dataset')
-
-parser.add_argument('--N', type=int, default=20, metavar='N',
-        help='size of vector in the dataset')
-parser.add_argument('--K', type=int, default=2, metavar='N',
-        help='Number of signals to reconstruct from')
-parser.add_argument('--maxout', action='store_true', 
-                    help='True for maxout in middle layer, False for conv1 (default)')
-parser.add_argument('--pow_2_channels', action='store_true', 
-                    help='True for power of 2 channels, '
-                    'False for 1 layer with output channel of 8 (default)')
-parser.add_argument('--n_heads', type=int, default=1, 
-                help='number of cnn heads')
-parser.add_argument('--model', type=int, default=3,  
-                    help='1 for CNNBS1 - reshape size to reduce dimension'
-                    ' 2 for CNNBS2 - strided convolution to reduce dimension')
-# model 
-parser.add_argument('--pre_residuals', type=int, default=9, 
-                    help='pre residuals layers count')
-parser.add_argument('--up_residuals', type=int, default=8, 
-                    help='up residuals layers count')
-parser.add_argument('--post_residuals', type=int, default=2, 
-                    help='post residuals layers count')
-parser.add_argument('--last_ch', type=int, default=256, 
-                    help='last_ch')
-parser.add_argument('--channels', type=int, nargs='+', 
-                    default=[32, 8], 
-                    help='layer_channels list of values on each of heads. '
-                    'The default fits model3')
-parser.add_argument('--pre_conv_channels', type=int, nargs='+', 
-                    default=[8, 32], 
-                    help='layer_channels list of values on each of heads')
-parser.add_argument('--reduce_height', type=int, nargs='+', default=[4, 3, 3], 
-                    help='relevant only for model2 - [count kernel stride] ' 
-                    'for reducing height in tensor: BXCXHXW to BXCX1XW')
-    
-args = parser.parse_args()
 
 # Set device
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-# Set args
-baseline_data_folder = f'baseline_K_{args.K}_N_{args.N}'
-model_folder = 'test_sc_avg_32'
-test_folder = model_folder
+
+# Init args
+args = draw_comp_args
+params = draw_comp_params
 N = args.N
 K = args.K
-check_k1_k2_distance = False
-mode = ['opt', 'none']
-data_size=5000
-data_type = 'gaussian_pulse'
-normalize=True
-f1 = 0  #loss_sc
-f2 = 1. #loss_l1_aligned
-f3 = 0. #loss_l1_mse
-read_baseline = False
-if mode[0] == 'opt':
-    read_baseline = False
+if params.mode[0] == 'opt':
+    params.read_baseline = False
 
 # Set baeline data path
-baseline_data_path = os.path.join(os.path.join(hparams.data_root, 'baseline_data'),
-                                  baseline_data_folder)
+baseline_data_path = os.path.join('../data', params.baseline_data_folder)
 # Set model path
-model_path = os.path.join(os.path.join(os.path.join(hparams.data_root, 'tests'),
-                          model_folder),
-                          'ckp.pt')
+model_path = os.path.join(os.path.join('../output', params.test_folder),'ckp.pt')
 # Set output folder path
-output_path = os.path.join(os.path.join(hparams.data_root, 'tests'),
-                                        test_folder)
+output_path = os.path.join('../output', params.test_folder)
 
 if not os.path.exists(output_path):
     os.mkdir(output_path)
@@ -96,9 +55,11 @@ if not os.path.exists(baseline_data_path):
     print(f'error, baseline_data_path does not exist: {baseline_data_path}')
     exit(1)
 
+# Init helpers
 bs_calc = BispectrumCalculator(K, N, device).to(device)
 aligner = BatchAligneToReference(device).to(device)
     
+# Init functions
 def read_org(folder, k, K, label='x_true'):
     if K > 1:
         sample_path = os.path.join(folder, f'{label}_{k+1}.csv')
@@ -181,13 +142,13 @@ def switch_criterion_mse_aligned(pred, target):
 
 def switch_position(pred, target):
     switch = False
-    if f1 != 0: #loss_sc
+    if params.f1 != 0: #loss_sc
         bs_pred, pred = bs_calc(pred, "sum")
         bs_target, target = bs_calc(target, "sum")
         _, switch = switch_criterion(bs_pred, bs_target)
-    if f2 != 0: #loss_l1_aligned
+    if params.f2 != 0: #loss_l1_aligned
         _, switch = switch_criterion_l1_aligned(pred, target)
-    if f3 != 0: #loss_l1_mse
+    if params.f3 != 0: #loss_l1_mse
         _, switch = switch_criterion_mse_aligned(pred, target)
     if switch:
         pred = torch.flip(pred, dims=(-2,))
@@ -195,37 +156,36 @@ def switch_position(pred, target):
     return pred
 
 # Load the model
-model = get_model(device, args)
-model.load_state_dict(torch.load(model_path)['model_state_dict'])
+model = get_model(device, args, is_distributed=False, use_transformers=params.use_transformers)
+load_model_safely(model, model_path)
 model.eval()
 model.to(device)
 
-# Get number of samples
-#len(os.listdir(baseline_data_path))
-
-# Create Dataset
+# Create Validation Dataset
 dataset = create_dataset(device, 
-                         data_size, 
+                         params.data_size, 
                          K, 
                          N, 
-                         read_baseline, 
-                         mode, 
+                         params.read_baseline, 
+                         params.mode, 
                          baseline_data_path, 
-                         data_type,
-                         normalize)
-dataloader = DataLoader(
-    dataset=dataset,
-    batch_size=1,
-    pin_memory=False,
-    shuffle=False
-)
+                         params.data_type,
+                         params.normalize
+                         )
+
+dataloader = DataLoader(dataset=dataset,
+                        batch_size=1,
+                        pin_memory=False,
+                        shuffle=False
+                        )
+
 # Set baseline data
 baseline = read_dataset_from_baseline(baseline_data_path, 
-                                      data_size, 
+                                      params.data_size, 
                                       K, 
                                       N, 
                                       'x_est')
-if normalize:
+if params.normalize:
     y = torch.fft.fft(baseline, dim=-1)
     y /= torch.norm(y, dim=-1).unsqueeze(2)
     baseline = torch.fft.ifft(y, dim=-1)
@@ -235,19 +195,20 @@ if normalize:
 avg_err = 0.
 avg_min_err_between_signals = 0.
 for idx, (source, target) in dataloader:
+
     i = idx.item()
-    # Set output folder
+    source = source.to(device)
+    target = target.to(device)
+    
+    # Set output folder per sample
     folder_write = os.path.join(output_path, f'sample{i}')
     if not os.path.exists(folder_write):
         os.mkdir(folder_write)
-    
-    source = source.to(device)
-    target = target.to(device)
-
-    # Pass the baseline samples' bispectrum through the model
+  
+    # Pass the sample's bispectrum through the model
     output = model(source)
     
-    if K == 2 and check_k1_k2_distance:
+    if K == 2 and params.check_k1_k2_distance:
         # Calculate distance between s0 and s1, to verify the cnn does not learn the same signal
         # Option 1 - no switch
         output, _ = aligner(output, target)
@@ -262,14 +223,7 @@ for idx, (source, target) in dataloader:
                                       torch.norm(output.squeeze(0)[0]))
         print(f'min_err_between_signals={min_err_between_signals}')
         avg_min_err_between_signals += min_err_between_signals
-    else:
-        output = switch_position(output, target)
-#        output, _ = aligner(output, target)
 
-
-    rel_error_X_path = os.path.join(folder_write, 'rel_error_X.csv')
-
-    if K == 2 and check_k1_k2_distance:
         # Align output 1 to output 0 --> output 1 aligned
         output_1_aligned, _ = align_to_reference(output.squeeze(0)[1], 
                                         output.squeeze(0)[0])
@@ -281,11 +235,12 @@ for idx, (source, target) in dataloader:
         
         target = torch.stack([target_0_aligned, target_1_aligned], dim=0)
         output = torch.stack([output.squeeze(0)[0], output_1_aligned], dim=0)
-        rel_error_X = torch.norm(target - output) / torch.norm(target)
-        print(f'sample{i}, err={rel_error_X}')        
-        avg_err += rel_error_X
+
         output_avg = (output[0] + output[1]) / 2
         target_avg = (target[0] + target[1]) / 2
+        rel_error_X = torch.norm(target - output) / torch.norm(target)
+        
+        # fig 1
         fig_path = os.path.join(folder_write, 'comp_s1_pred_s2_pred_preds_avg.jpg')
         plt.figure(figsize=(9, 5))
         plt.title(f'Comparison between s1_pred, s2_pred, pred_avg, sample{i}, rel_mse={rel_error_X:.03f}')
@@ -299,8 +254,9 @@ for idx, (source, target) in dataloader:
         plt.legend()
         plt.savefig(fig_path)        
         plt.close()
+        
+        # fig 2
         fig_path = os.path.join(folder_write, 'comp_s1_s2_s1_pred_s2_pred.jpg')
-    
         plt.figure(figsize=(9, 5))
         plt.title(f'Comparison between s1, s2, s1_pred, s2_pred, sample{i}')
         plt.plot(target[0].cpu().detach().numpy(), label='s1', color='tab:blue')
@@ -313,7 +269,37 @@ for idx, (source, target) in dataloader:
         plt.legend()
         plt.savefig(fig_path)        
         plt.close()
+        
+        # fig 3
+        fig_path = os.path.join(folder_write, 'comp_s1_s1_pred.jpg')
+        plt.figure(figsize=(9, 5))
+        plt.title(f'Comparison between s1, s1_pred, sample{i}')
+        plt.plot(target[0].cpu().detach().numpy(), label='s1', color='tab:blue')
+        plt.plot(output[0].cpu().detach().numpy(), label='s1_pred', color='tab:orange', linestyle='dashed')
+    
+        plt.ylabel('signal')
+        plt.xlabel('time')
+        plt.legend()
+        plt.savefig(fig_path)        
+        plt.close()
+        
+        # fig 4
+        fig_path = os.path.join(folder_write, 'comp_s2_s2_pred.jpg')
+        plt.figure(figsize=(9, 5))
+        plt.title(f'Comparison between s2, s2_pred, sample{i}')
+        plt.plot(target[1].cpu().detach().numpy(), label='s2', color='tab:green')
+        plt.plot(output[1].cpu().detach().numpy(), label='s2_pred', color='tab:red', linestyle='dashed')
+    
+        plt.ylabel('signal')
+        plt.xlabel('time')
+        plt.legend()
+        plt.savefig(fig_path)        
+        plt.close()
     else:
+        if K == 1:
+            output, _ = aligner(output, target)
+        else:
+            output = switch_position(output, target)
         # Plot org, baseline and output for comparison
         for j in range(K):
             # set folder to write to
@@ -324,13 +310,19 @@ for idx, (source, target) in dataloader:
             plot_output_debug2(target.squeeze(0)[j].cpu().detach().numpy(), 
                                     output.squeeze(0)[j].cpu().detach().numpy(),
                                     folder_k,
-                                    baseline[i][j])
-        rel_error_X = torch.norm(target - output) / torch.norm(target)
-        np.savetxt(rel_error_X_path, [rel_error_X.item()])
-        print(f'sample{i}, err={rel_error_X}')        
+                                    baseline[i][j])     
+    rel_error_X = torch.norm(target - output) / torch.norm(target)
+    rel_error_X_path = os.path.join(folder_write, 'rel_error_X.csv')
+    np.savetxt(rel_error_X_path, [rel_error_X.item()])
+    print(f'sample{i}, err={rel_error_X}')  
+    avg_err += rel_error_X
+    print(f'curent avg={(avg_err/(i+1)):.08f}')      
 
         
-print(f'avg err={(avg_err / data_size):.08f}')        
-if K == 2 and check_k1_k2_distance:
-    print(f'avg min_err_between_signals={(avg_err / data_size):.08f}')        
+avg_err /= params.data_size
+print(f'avg err={avg_err:.08f}')   
+np.savetxt(f'{output_path}/avg_err.csv', [avg_err.item()])     
+if K == 2 and params.check_k1_k2_distance:
+    print(f'avg min_err_between_signals={avg_err:.08f}')        
+    np.savetxt(f'{output_path}/avg_min_err_between_signals.csv', [avg_err.item()])     
 
