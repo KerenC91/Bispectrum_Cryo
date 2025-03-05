@@ -78,7 +78,13 @@ class Trainer:
         self.debug = args.debug
         self.log_level = args.log_level
         self.min_ckp_val_loss = torch.inf
-        self.min_loss_epoch = 0
+        self.min_loss_epoch = 0        
+        self.autocast = torch.cuda.amp.autocast(enabled=args.fp16)
+        self.scaler = torch.cuda.amp.GradScaler(enabled=args.fp16)
+        
+        print(f'args.fp16={args.fp16}')
+        print(f'self.autocast={self.autocast}')
+        print(f'self.scaler={self.scaler}')
         
     def _loss(self, pred, target):
         total_loss = 0.
@@ -309,20 +315,21 @@ class Trainer:
         target = target.to(self.device)
         source = source.to(self.device)
 
-        # Forward pass
-        output = self.model(source) # reconstructed signal
-        #if (not self.is_training) or (self.is_training and self.loss_method == 'sum'):
-        # if self.target_len % self.window_size != 0:
-        #     padding = (self.window_size - (N % self.window_size)) % self.window_size
-        #     output = output[:,:,:(self.target_len - padding + 1)]
-        if self.signals_count > 1:
-            output = self._switch_position(output, target)
-        # if not self.is_training:
-        #     output, _ = self.aligner(output, target)
-             
-        # Loss calculation
-
-        loss = self.loss_f(output, target)
+        with self.autocast:  # Enable Mixed Precision
+            # Forward pass
+            output = self.model(source) # reconstructed signal
+            #if (not self.is_training) or (self.is_training and self.loss_method == 'sum'):
+            # if self.target_len % self.window_size != 0:
+            #     padding = (self.window_size - (N % self.window_size)) % self.window_size
+            #     output = output[:,:,:(self.target_len - padding + 1)]
+            if self.signals_count > 1:
+                output = self._switch_position(output, target)
+            # if not self.is_training:
+            #     output, _ = self.aligner(output, target)
+                 
+            # Loss calculation
+    
+            loss = self.loss_f(output, target)
 
         return loss
         
@@ -339,6 +346,7 @@ class Trainer:
             y /= torch.norm(y, dim=-1).unsqueeze(2)
             target = torch.fft.ifft(y, dim=-1) 
             target = target.type(torch.float32)
+        
         source, target = self.bs_calc(target)
 
         if self.mode[1] == 'shift':
@@ -349,17 +357,18 @@ class Trainer:
         # Move data to device
         target = target.to(self.device)
         source = source.to(self.device)
-        # Forward pass
-        output = self.model(source) # reconstructed signal
-        # if self.target_len % self.window_size != 0:
-        #     padding = (self.window_size - (N % self.window_size)) % self.window_size
-        #     output = output[:,:,:(self.target_len - padding + 1)]
-        #if self.loss_method == 'sum':
-        if self.signals_count > 1:
-            output = self._switch_position(output, target)
+        with self.autocast:  # Enable Mixed Precision
+            # Forward pass
+            output = self.model(source) # reconstructed signal
+            # if self.target_len % self.window_size != 0:
+            #     padding = (self.window_size - (N % self.window_size)) % self.window_size
+            #     output = output[:,:,:(self.target_len - padding + 1)]
+            #if self.loss_method == 'sum':
+            if self.signals_count > 1:
+                output = self._switch_position(output, target)
         
-        # Loss calculation
-        loss = self.loss_f(output, target)
+            # Loss calculation
+            loss = self.loss_f(output, target)
         return loss
             
     def plot_output_debug(self, target, output, folder, from_matlab=None):
@@ -407,12 +416,15 @@ class Trainer:
             else:#if self.mode[0] == 'rand': 
                 loss = self._run_batch_rand()
             # backward pass
-            loss.backward()
+            # loss.backward()
+            self.scaler.scale(loss).backward()
             # clip gradients
             if self.clip:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip)
             # optimizer step
-            self.optimizer.step()
+            # self.optimizer.step()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
             # update avg loss 
             total_loss += loss.item()
             # scheduler step after batch
@@ -438,6 +450,7 @@ class Trainer:
         total_loss = 0
         total_mse_loss = 0
         total_mse_norm_loss = 0
+        
         # pdb.set_trace()
         for idx, (sources, targets) in self.train_loader:
             # zero grads
@@ -449,13 +462,16 @@ class Trainer:
                 # pdb.set_trace()
                 loss, mse_loss, rel_mse_loss = self._run_batch_rand()
             # backward pass
-            loss.backward()
+            # loss.backward()
+            self.scaler.scale(loss).backward()
             # clip gradients
             if self.clip:    
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip)
             # optimizer step
-            self.optimizer.step()
-            torch.cuda.empty_cache()
+            # self.optimizer.step()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            # torch.cuda.empty_cache()
             # update avg loss 
             total_loss += loss.item()
             total_mse_loss += mse_loss.item()
@@ -603,6 +619,8 @@ class Trainer:
 
         
     def run(self):
+        
+       
         for self.epoch in range(self.start_epoch + 1, self.epochs + 1):
             # train             
             train_loss = self.train()
@@ -639,6 +657,7 @@ class Trainer:
                         print(f'val relative mse loss: {val_rel_mse_loss:.6f}')
                     if self.scheduler_name != 'None':
                         print(f'lr: {last_lr}')
+                    print(f'The minimal validation loss is {self.min_ckp_val_loss} from epoch {self.min_loss_epoch}.')   
                 # save checkpoint
                 if self.epoch == 1 or self.epoch % self.save_every == 0:
                     if val_loss < self.min_ckp_val_loss: 
@@ -647,9 +666,9 @@ class Trainer:
                         self.min_loss_epoch = self.epoch
                         # Save new checkpoint
                         self._save_checkpoint()
-                    else:
-                        print(f'Epoch: {self.epoch} New checkpoint is worse. Keeping the one with'
-                              f' minimal validation loss {self.min_ckp_val_loss} from epoch {self.min_loss_epoch}.')    
+                    # else:
+                    #     print(f'Epoch: {self.epoch} New checkpoint is worse. Keeping the one with'
+                    #           f' minimal validation loss {self.min_ckp_val_loss} from epoch {self.min_loss_epoch}.')    
                 # plot outputs on last epoch
                 if self.epoch == self.epochs and self.plotting_off == False:
                     if self.read_baseline != 0:

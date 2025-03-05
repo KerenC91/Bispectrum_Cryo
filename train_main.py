@@ -611,16 +611,20 @@ def _train_impl(device, args, params, is_distributed=False):
                 run = wandb.init(project=args.wandb_proj_name,
                    	           name = f"{test_name}",
                    	           config=args)
-                wandb.log({"cmd_line": sys.argv})
-                wandb.save('hparams.py')
-                wandb.save("train_main.py")
-                wandb.save(f"model{args.model}.py")     
             else: #resume run
                 resume_mode = "must"
                 run = wandb.init(project=args.wandb_proj_name, 
                                  id=args.wandb_run_id, 
                                  resume=resume_mode)
-            print(f'Running with {args.nprocs} GPUs')
+            wandb.log({"cmd_line": sys.argv})
+            wandb.save('hparams.py')
+            wandb.save("train_main.py")
+            wandb.save(f"model{args.model}.py") 
+            # Save wandb run id to the output folder
+            folder_python = os.path.join('output', test_name)
+            np.savetxt(f'{folder_python}/wandb_run_id.csv', [wandb.run.id], fmt='%s')  
+            print(f'Starting wandb with {resume_mode}')
+        print(f'Running with {args.nprocs} GPUs')
             
     # Initialize args
     folder_matlab, folder_python = init(args, test_name)
@@ -721,12 +725,15 @@ def _train_impl(device, args, params, is_distributed=False):
         start_time = time.time()  
         print("Starting run...")
     
+    # Free GPU Memory Before Training
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+
     # Train and evaluate
     trainer.run()
     
     if device == 0:
        	end_time = time.time()
-        if wandb_flag:
-            np.savetxt(f'{folder_python}/wandb_run_id.csv', [wandb.run.id], fmt='%s')    
+  
         print(f"Time taken to train in {os.path.basename(__file__)}:", 
               end_time - start_time, "seconds")

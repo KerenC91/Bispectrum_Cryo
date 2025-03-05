@@ -72,18 +72,19 @@ def clculate_bispectrum_efficient(x, normalize=False):
         Bispectrum.
 
     """
-    y = torch.fft.fft(x)
-    circulant = lambda v: torch.cat([f := v, f[:-1]]).unfold(0, len(v), 1).flip(0)
-    # Bx = (y.unsqueeze(1) *\
-    #     torch.conj(y).T.unsqueeze(0)) * circulant(torch.roll(y, -1))
-    C = circulant(torch.roll(y, -1))
-    Bx = y.unsqueeze(1) @ y.conj().unsqueeze(0)
-    Bx = Bx * C
-    
-    if normalize:
-        eps = 1e-8
-        Bx_factor = torch.pow(torch.abs(Bx), 2/3) + eps
-        Bx = Bx / Bx_factor
+    with torch.cuda.amp.autocast(False):
+        y = torch.fft.fft(x)
+        circulant = lambda v: torch.cat([f := v, f[:-1]]).unfold(0, len(v), 1).flip(0)
+        # Bx = (y.unsqueeze(1) *\
+        #     torch.conj(y).T.unsqueeze(0)) * circulant(torch.roll(y, -1))
+        C = circulant(torch.roll(y, -1))
+        Bx = y.unsqueeze(1) @ y.conj().unsqueeze(0)
+        Bx = Bx * C
+        
+        if normalize:
+            eps = 1e-8
+            Bx_factor = torch.pow(torch.abs(Bx), 2/3) + eps
+            Bx = Bx / Bx_factor
     return Bx
 
 
@@ -99,12 +100,14 @@ class BispectrumCalculator(nn.Module):
         self.width = target_len
         
     def _create_data(self, target):
-        # Create data
-        target = target.clone()
-        bs = self.calculator(target)
-        bs_real = bs.real.float()
-        bs_imag = bs.imag.float()
-        source = torch.stack([bs_real, bs_imag], dim=0)
+        with torch.cuda.amp.autocast(False):
+            # Create data
+            target = target.to(torch.float32)
+            target = target.clone()
+            bs = self.calculator(target)
+            bs_real = bs.real.float()
+            bs_imag = bs.imag.float()
+            source = torch.stack([bs_real, bs_imag], dim=0)
                
         return source, target 
     # target: signal 1Xtarget_len

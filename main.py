@@ -191,6 +191,9 @@ if __name__ == "__main__":
     # distributed training
     parser.add_argument('--nprocs', default=torch.cuda.device_count(), type=int, 
                         help='nprocs, default is the number of available gpus on the machine')
+    # mixed precision
+    parser.add_argument('--fp16', action='store_true', 
+                        help='Use mixed percision if on.')
     
     args = parser.parse_args()
 
