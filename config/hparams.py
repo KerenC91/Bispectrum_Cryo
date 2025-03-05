@@ -10,7 +10,7 @@ hparams = HParams(
     # debug parameters
     #####################################
     debug_model = 3,
-    debug_N = 176,
+    debug_N = 24,
     debug_last_ch = 128,# 8 for 1, 2,
     debug_pre_conv_channels = [8, 32, 256], # [8, 32, 64, debug_last_ch]
     debug_pre_residuals = 11,
@@ -44,10 +44,10 @@ hparams = HParams(
         
     # ReduceLROnPlateau 
     reduce_lr_mode='min',
-    reduce_lr_factor = 0.1,
-    reduce_lr_threshold = 1e-3,
-    reduce_lr_patience = 3,
-    reduce_lr_cooldown = 0,
+    reduce_lr_factor = 0.5,
+    reduce_lr_threshold = 1e-4,
+    reduce_lr_patience = 5,
+    reduce_lr_cooldown = 2,
 
     # StepLR - every step_size epochs decrease by lr gamma factor
     step_lr_step_size = 2000,#1000, 
@@ -119,7 +119,7 @@ hparams = HParams(
     ##########################
     # additional params
     ##########################
-    early_stopping = 10,
+    early_stopping = 100,
     dbg_draw_rate=100,
     loss_lim = 1e-6,
     # comparison with baseline
