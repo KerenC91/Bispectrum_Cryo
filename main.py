@@ -13,6 +13,8 @@ from config.hparams import hparams
 from train_main import train, train_distributed
 import os
 
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+
 def is_torchrun():
     if 'LOCAL_RANK' in os.environ:
         return True
@@ -57,9 +59,9 @@ if __name__ == "__main__":
             ' \'CosineAnnealingLR\', \'CyclicLR\', \'Manual\'. '
             'Update configurtion parametes accordingly. '
             'default: \'None\' - no change in lr') 
-    parser.add_argument('--scheduler_from_start', action='store_true', 
-                        help='In case of loading from checkpoint, if set, start scheduler from scratch.'
-                        ' Else, resume scheduler from checkpoint.') 
+    parser.add_argument('--from_pretrained', action='store_true', 
+                        help='In case of loading from checkpoint, if set, start scheduler and optimizer '
+                        'from scratch. Else, resume scheduler and optimizer from checkpoint.') 
     # data
     parser.add_argument('--data_type', type=str, default="normal_distribution", 
                         help='one out of \"normal_distribution\", \"gaussian_pulse\". '
@@ -168,16 +170,18 @@ if __name__ == "__main__":
     #
     parser.add_argument('--comp_test_name', type=str, default='test',
             help='folder test name to save results into') 
-    parser.add_argument('--save_every', type=int, default=100, metavar='N',
+    parser.add_argument('--save_every', type=int, default=5, 
             help='save checkpoint every <save_every> epoch')
+    parser.add_argument('--print_every', type=int, default=100,
+            help='print losses every <print_every> epoch')
     parser.add_argument('--early_stopping', action='store_true', 
                         help='early stopping after early_stopping times. '
                         'Update early_stopping in configuration') 
     parser.add_argument('--plotting_off', action='store_true', 
                         help='If set, do not plot data samples at the end. Can draw '
                         'offline using saved checkpoint and initial samples.') 
-    parser.add_argument('--suffix', type=str, default='',
-            help='suffix to add to the name of the cnn yml file') 
+    # parser.add_argument('--suffix', type=str, default='',
+    #         help='suffix to add to the name of the cnn yml file') 
     # debug
     parser.add_argument('--debug', action='store_true', 
                         help='debugging mode. Use debug params from hparams.')

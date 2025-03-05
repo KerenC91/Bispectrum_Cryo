@@ -42,6 +42,7 @@ class Trainer:
         self.target_len = args.N
         self.signals_count = args.K
         self.save_every = args.save_every
+        self.print_every = args.print_every
         self.model = model
         self.is_distributed = is_distributed
         self.wandb_flag = wandb_flag
@@ -52,7 +53,7 @@ class Trainer:
         self.prev_val_loss = torch.inf
         self.early_stopping = args.early_stopping
         self.es_cnt = 0
-        self.suffix = args.suffix
+        # self.suffix = args.suffix
         self.n_heads = args.n_heads
         self.optimizer = optimizer
         self.optimizer_name = optimizer_name
@@ -76,8 +77,8 @@ class Trainer:
         self.is_master = (device == 0)
         self.debug = args.debug
         self.log_level = args.log_level
-        self.prev_ckp_val_loss = torch.inf
-        
+        self.min_ckp_val_loss = torch.inf
+        self.min_loss_epoch = 0
         
     def _loss(self, pred, target):
         total_loss = 0.
@@ -156,7 +157,7 @@ class Trainer:
                             torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2))**2)
             if self.log_level == 3:
                 if self.wandb_flag and \
-                    (self.epoch == 1 or self.epoch % self.save_every == 0):
+                    (self.epoch == 1 or self.epoch % self.print_every == 0):
                     if (self.is_training):
                         wandb.log({"bs_pred_minus_bs_gt_norm_avg": torch.mean(torch.norm((bs_pred - bs_gt).view(sh[0], sh[1], -1), dim=(0, 2)))})
                         wandb.log({"bs_gt_norm_avg": torch.mean(torch.norm(bs_gt.view(sh[0], sh[1], -1), dim=(0, 2)))})
@@ -164,14 +165,14 @@ class Trainer:
             loss = torch.norm(bs_pred - bs_gt)**2 / torch.norm(bs_gt)**2
             if self.log_level == 3:
                 if self.wandb_flag and \
-                    (self.epoch == 1 or self.epoch % self.save_every == 0):
+                    (self.epoch == 1 or self.epoch % self.print_every == 0):
                     if (self.is_training):
                         wandb.log({"bs_pred_minus_bs_gt_norm": torch.norm(bs_pred - bs_gt)})
                         wandb.log({"bs_gt_norm": torch.norm(bs_gt)})
         
         if self.log_level == 3:
             if self.wandb_flag and \
-                (self.epoch == 1 or self.epoch % self.save_every == 0):
+                (self.epoch == 1 or self.epoch % self.print_every == 0):
                 if (self.is_training):
                     wandb.log({"bs_pred": torch.norm(bs_pred)})
                     wandb.log({"bs_gt": torch.norm(bs_gt)})
@@ -295,7 +296,7 @@ class Trainer:
         """  
         if self.log_level == 3:
             if self.wandb_flag and \
-                (self.epoch == 1 or self.epoch % self.save_every == 0):
+                (self.epoch == 1 or self.epoch % self.print_every == 0):
                 if (self.is_training):
                     wandb.log({"pred": torch.norm(pred)})
                     wandb.log({"gt": torch.norm(target)})
@@ -617,7 +618,7 @@ class Trainer:
             if self.is_master:
                 # log loss with wandb
                 if self.wandb_flag and \
-                    (self.epoch == 1 or self.epoch % self.save_every == 0):
+                    (self.epoch == 1 or self.epoch % self.print_every == 0):
                     wandb.log({"train_loss": train_loss})
                     wandb.log({"val_loss": val_loss})
                     wandb.log({"lr": self.optimizer.param_groups[0]['lr']})
@@ -626,8 +627,8 @@ class Trainer:
                         wandb.log({"train relative mse": train_rel_mse_loss})
                         wandb.log({"val mse": val_mse_loss})
                         wandb.log({"val relative mse": val_rel_mse_loss})
-                # save checkpoint and log loss to cmd 
-                if self.epoch == 1 or self.epoch % self.save_every == 0:
+                # print losses
+                if self.epoch == 1 or self.epoch % self.print_every == 0:
                     print(f'-------Epoch {self.epoch}/{self.epochs}-------')
                     print(f'Total Train loss: {train_loss:.6f}')
                     print(f'Total Validation loss: {val_loss:.6f}')
@@ -638,12 +639,17 @@ class Trainer:
                         print(f'val relative mse loss: {val_rel_mse_loss:.6f}')
                     if self.scheduler_name != 'None':
                         print(f'lr: {last_lr}')
-                    # save checkpoint
-                    if val_loss < self.prev_ckp_val_loss: 
+                # save checkpoint
+                if self.epoch == 1 or self.epoch % self.save_every == 0:
+                    if val_loss < self.min_ckp_val_loss: 
+                        # Update the new minimum
+                        self.min_ckp_val_loss = val_loss
+                        self.min_loss_epoch = self.epoch
+                        # Save new checkpoint
                         self._save_checkpoint()
                     else:
-                        print('New checkpoint is worse. Keeping the previous one.')
-                    self.prev_ckp_val_loss = val_loss
+                        print(f'Epoch: {self.epoch} New checkpoint is worse. Keeping the one with'
+                              f' minimal validation loss {self.min_ckp_val_loss} from epoch {self.min_loss_epoch}.')    
                 # plot outputs on last epoch
                 if self.epoch == self.epochs and self.plotting_off == False:
                     if self.read_baseline != 0:
@@ -651,17 +657,7 @@ class Trainer:
                             self.write_python_test_results(self.train_dataset)
                         elif self.read_baseline == 2:
                             self.write_python_test_results(self.val_dataset)
-
-                # stop early if early_stopping is on
-                if self.early_stopping:
-                    if self.prev_val_loss < val_loss:
-                        self.es_cnt +=1
-                        if self.es_cnt == hparams.early_stopping:
-                            if self.is_master:
-                                print(f'Stooped at epoch {self.epoch}, after {self.es_cnt} times\n'
-                                      f'prev_val_loss={self.prev_val_loss}, curr_los={train_loss}')
-                            break
-                        
+                      
                 # early stopping - stop early if early_stopping is on
                 if self.early_stopping:
                     if self.prev_val_loss < val_loss:
@@ -672,6 +668,7 @@ class Trainer:
                     if self.es_cnt == hparams.early_stopping:
                         print(f'Stopped at epoch {self.epoch}, after {self.es_cnt} times\n'
                               f'prev_val_loss={self.prev_val_loss}, curr_loss={train_loss}')
+                        self._save_checkpoint()
                         
                         if self.is_distributed:
                             # Signal all processes to terminate

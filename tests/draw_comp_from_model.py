@@ -156,8 +156,10 @@ def switch_position(pred, target):
     return pred
 
 # Load the model
+
 model = get_model(device, args, is_distributed=False, use_transformers=params.use_transformers)
-load_model_safely(model, model_path)
+# map_location = f"cuda:{device}"
+_ = load_model_safely(device, model, model_path, args, device)
 model.eval()
 model.to(device)
 
@@ -221,7 +223,7 @@ for idx, (source, target) in dataloader:
         min_err_between_signals = min(min_err_between_signals, 
                                       torch.norm(output.squeeze(0)[0] - output.squeeze(0)[1]) / \
                                       torch.norm(output.squeeze(0)[0]))
-        print(f'min_err_between_signals={min_err_between_signals}')
+        # print(f'min_err_between_signals={min_err_between_signals}')
         avg_min_err_between_signals += min_err_between_signals
 
         # Align output 1 to output 0 --> output 1 aligned
@@ -240,35 +242,35 @@ for idx, (source, target) in dataloader:
         target_avg = (target[0] + target[1]) / 2
         rel_error_X = torch.norm(target - output) / torch.norm(target)
         
-        # fig 1
-        fig_path = os.path.join(folder_write, 'comp_s1_pred_s2_pred_preds_avg.jpg')
-        plt.figure(figsize=(9, 5))
-        plt.title(f'Comparison between s1_pred, s2_pred, pred_avg, sample{i}, rel_mse={rel_error_X:.03f}')
-        plt.plot(output[0].cpu().detach().numpy(), label='s1_pred', color='tab:orange')
-        plt.plot(output[1].cpu().detach().numpy(), label='s2_pred', color='tab:red')
-        plt.plot(output_avg.cpu().detach().numpy(), label='avg_pred', color='tab:blue', linestyle='dashed')
-        plt.plot(target_avg.cpu().detach().numpy(), label='target_avg', color='tab:green')
+        # # fig 1
+        # fig_path = os.path.join(folder_write, 'comp_s1_pred_s2_pred_preds_avg.jpg')
+        # plt.figure(figsize=(9, 5))
+        # plt.title(f'Comparison between s1_pred, s2_pred, pred_avg, sample{i}, rel_mse={rel_error_X:.03f}')
+        # plt.plot(output[0].cpu().detach().numpy(), label='s1_pred', color='tab:orange')
+        # plt.plot(output[1].cpu().detach().numpy(), label='s2_pred', color='tab:red')
+        # plt.plot(output_avg.cpu().detach().numpy(), label='avg_pred', color='tab:blue', linestyle='dashed')
+        # plt.plot(target_avg.cpu().detach().numpy(), label='target_avg', color='tab:green')
     
-        plt.ylabel('signal')
-        plt.xlabel('time')
-        plt.legend()
-        plt.savefig(fig_path)        
-        plt.close()
+        # plt.ylabel('signal')
+        # plt.xlabel('time')
+        # plt.legend()
+        # plt.savefig(fig_path)        
+        # plt.close()
         
-        # fig 2
-        fig_path = os.path.join(folder_write, 'comp_s1_s2_s1_pred_s2_pred.jpg')
-        plt.figure(figsize=(9, 5))
-        plt.title(f'Comparison between s1, s2, s1_pred, s2_pred, sample{i}')
-        plt.plot(target[0].cpu().detach().numpy(), label='s1', color='tab:blue')
-        plt.plot(target[1].cpu().detach().numpy(), label='s2', color='tab:green')
-        plt.plot(output[0].cpu().detach().numpy(), label='s1_pred', color='tab:orange', linestyle='dashed')
-        plt.plot(output[1].cpu().detach().numpy(), label='s2_pred', color='tab:red', linestyle='dashed')
+        # # fig 2
+        # fig_path = os.path.join(folder_write, 'comp_s1_s2_s1_pred_s2_pred.jpg')
+        # plt.figure(figsize=(9, 5))
+        # plt.title(f'Comparison between s1, s2, s1_pred, s2_pred, sample{i}')
+        # plt.plot(target[0].cpu().detach().numpy(), label='s1', color='tab:blue')
+        # plt.plot(target[1].cpu().detach().numpy(), label='s2', color='tab:green')
+        # plt.plot(output[0].cpu().detach().numpy(), label='s1_pred', color='tab:orange', linestyle='dashed')
+        # plt.plot(output[1].cpu().detach().numpy(), label='s2_pred', color='tab:red', linestyle='dashed')
     
-        plt.ylabel('signal')
-        plt.xlabel('time')
-        plt.legend()
-        plt.savefig(fig_path)        
-        plt.close()
+        # plt.ylabel('signal')
+        # plt.xlabel('time')
+        # plt.legend()
+        # plt.savefig(fig_path)        
+        # plt.close()
         
         # fig 3
         fig_path = os.path.join(folder_write, 'comp_s1_s1_pred.jpg')
