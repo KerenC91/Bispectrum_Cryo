@@ -33,8 +33,9 @@ hparams = HParams(
     debug_loss_method = "sum", #{"average", "sum"}
     
     #####################################
-    # loss config 
+    # data config 
     #####################################
+    sigma = 0.1,
     ##########################
     # scheduler config
     ##########################
@@ -47,7 +48,7 @@ hparams = HParams(
     reduce_lr_factor = 0.5,
     reduce_lr_threshold = 1e-4,
     reduce_lr_patience = 5,
-    reduce_lr_cooldown = 2,
+    reduce_lr_cooldown = 0,
 
     # StepLR - every step_size epochs decrease by lr gamma factor
     step_lr_step_size = 2000,#1000, 
@@ -83,8 +84,8 @@ hparams = HParams(
     # RMSProp
     opt_rms_prop_alpha = 0.99,
     # SGD
-    opt_sgd_momentum = 0.,
-    opt_sgd_weight_decay = 0.,
+    opt_sgd_momentum = 0.9,
+    opt_sgd_weight_decay = 1e-4,
     # AdamW
     opt_adam_w_betas=(0.9, 0.999),
     opt_adam_w_weight_decay=1e-2,

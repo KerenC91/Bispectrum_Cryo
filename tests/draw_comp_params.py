@@ -29,7 +29,7 @@ draw_comp_args = DictParams(
     channels = [32, 8],
     pre_conv_channels = [8, 32, 256], 
     reduce_height = [4, 3, 3], 
-    window_size = 8, 
+    window_size = 6, 
     img_size = 48,                        
     patch_size = 1,                   
     depths = [6, 6],                      
@@ -42,11 +42,12 @@ draw_comp_args = DictParams(
     norm_layer = True,
     downsample = False,
     resi_connection = '1conv',
+    from_pretrained = False,
     )
 
 draw_comp_params = DictParams(
     baseline_data_folder = f'baseline_K_{draw_comp_args.K}_N_{draw_comp_args.N}',
-    test_folder = 'swinT_K_2_average_3',
+    test_folder = 'K2_N24_win6_bs100_ep3000_tr5000_val100_lr_1.0e-03_AdamW_OneCycleLR_average_draw',
     check_k1_k2_distance = True,
     mode = ['opt', 'none'],
     data_size=100,

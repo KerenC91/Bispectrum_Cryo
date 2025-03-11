@@ -176,12 +176,15 @@ def align_to_reference(x, xref):
     x = x.flatten()
     xref = xref.flatten()
     
-    # Compute FFTs
-    x_fft = torch.fft.fft(x)
-    xref_fft = torch.fft.fft(xref)
-    
-    # Compute correlation using inverse FFT of complex conjugate product
-    correlation_x_xref = torch.real(torch.fft.ifft(torch.conj(x_fft) * xref_fft))
+    with torch.cuda.amp.autocast(False):
+        x = x.to(torch.float32)
+        xref = xref.to(torch.float32)
+        # Compute FFTs
+        x_fft = torch.fft.fft(x)
+        xref_fft = torch.fft.fft(xref)
+        
+        # Compute correlation using inverse FFT of complex conjugate product
+        correlation_x_xref = torch.real(torch.fft.ifft(torch.conj(x_fft) * xref_fft))
     
     # Find index of maximum correlation
     ind = torch.argmax(correlation_x_xref).item()

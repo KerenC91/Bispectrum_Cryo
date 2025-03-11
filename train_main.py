@@ -49,14 +49,6 @@ class BispectrumDataset(Dataset):
 
         return idx, (self.source[idx], self.target[idx])
 
-def read_noisy(folder):
-    # Needs update
-    sample_path = os.path.join(folder, 'data.csv')
-    target = read_tensor_from_matlab(sample_path, True) 
-    shifts = int(np.loadtxt(os.path.join(folder, 'shifts.csv'), delimiter=" "))
-    target = torch.roll(target, -shifts)
-    
-    return target    
 
 def read_org(folder, k, K, label='x_true'):
     if K > 1:
@@ -67,15 +59,8 @@ def read_org(folder, k, K, label='x_true'):
         target = read_tensor_from_matlab(sample_path, True)    
     return target  
 
-def set_read_func(folder_matlab):
-    if 'noisy' in folder_matlab:
-        f = read_noisy
-    else:
-        f = read_org
-    return f
 
 def read_dataset_from_baseline(folder_matlab, data_size, K, N, label='x_true'):
-    read_func = set_read_func(folder_matlab)
     data_size = min(data_size, len(os.listdir(folder_matlab)))
     target = torch.zeros(data_size, K, N)
 
@@ -84,57 +69,78 @@ def read_dataset_from_baseline(folder_matlab, data_size, K, N, label='x_true'):
     for i in range(data_size):
         folder = os.path.join(folder_matlab, f'sample{i}')
         for j in range(K):
-            target[i][j] = read_func(folder, j, K, label)   
+            target[i][j] = read_org(folder, j, K, label)   
     
     return target
    
+# def create_dataset(device, data_size, K, N, read_baseline, mode, 
+#                    folder_matlab, data_type, window_size, normalize=False, is_distributed=False):
+#     if is_distributed:
+#         device='cpu'
+#     bs_calc = BispectrumCalculator(K, N, device).to(device)
+#     print(f'read_baseline={read_baseline}, mode={mode}')
+#     if read_baseline: # in val dataset
+#         if data_type == 'gaussian_pulse':
+#             print("Error! Gaussian pulse does not have data to read from.")
+#             sys.exit(1)
+#         target = read_dataset_from_baseline(folder_matlab, data_size, K, N)
+#     else:
+#         if mode[0] == 'opt':
+#             # Create random dataset
+#             if data_type == 'gaussian_pulse':
+#                 eff_data_size = data_size * K
+#                 target = torch.zeros(eff_data_size, N)
+#                 n_per_side = N / 2.0
+#                 percentage = 0.1
+#                 mean = np.random.uniform(-n_per_side, n_per_side, eff_data_size) - percentage * n_per_side
+#                 std = np.random.uniform(0.0, 1000.0, eff_data_size)
+#                 for i in range(eff_data_size):
+#                     target[i], _ = create_gaussian_pulse(mean[i], std[i], N)
+#                 target = target.view(data_size, K, N)
+#             else: # normal distribution
+#                 target = torch.randn(data_size, K, N)
+#         elif mode[0] == 'rand':
+#             # Initialize dataset to zeros and create data on the fly 
+#             target = torch.zeros(data_size, K, N)
+#     if normalize:
+#         y = torch.fft.fft(target, dim=-1)
+#         y /= torch.norm(y, dim=-1).unsqueeze(2)
+#         target = torch.fft.ifft(y, dim=-1)
+#         target = target.type(torch.float32)
+#     target.to(device)
+#     source, target = bs_calc(target)
+#     if mode[0] == 'opt' and mode[1] == 'shift' and not read_baseline:
+#             target, shifts = rand_shift_signal(target, K, N, data_size)
+#     dataset = BispectrumDataset(source, target)
+
+#     return dataset
+
 def create_dataset(device, data_size, K, N, read_baseline, mode, 
-                   folder_matlab, data_type, window_size, normalize=False, is_distributed=False):
+                   folder_matlab, data_type, normalize=False, is_distributed=False, noisy=False):
     if is_distributed:
         device='cpu'
     bs_calc = BispectrumCalculator(K, N, device).to(device)
     print(f'read_baseline={read_baseline}, mode={mode}')
     if read_baseline: # in val dataset
-        if data_type == 'gaussian_pulse':
-            print("Error! Gaussian pulse does not have data to read from.")
-            sys.exit(1)
         target = read_dataset_from_baseline(folder_matlab, data_size, K, N)
+        if noisy:
+            data = read_dataset_from_baseline(folder_matlab, data_size, K, N, label="data")
+        else:
+            data = target
     else:
         if mode[0] == 'opt':
-            # Create random dataset
-            if data_type == 'gaussian_pulse':
-                eff_data_size = data_size * K
-                target = torch.zeros(eff_data_size, N)
-                n_per_side = N / 2.0
-                percentage = 0.1
-                mean = np.random.uniform(-n_per_side, n_per_side, eff_data_size) - percentage * n_per_side
-                std = np.random.uniform(0.0, 1000.0, eff_data_size)
-                for i in range(eff_data_size):
-                    target[i], _ = create_gaussian_pulse(mean[i], std[i], N)
-                target = target.view(data_size, K, N)
-            else: # normal distribution
-                target = torch.randn(data_size, K, N)
+            target = torch.randn(data_size, K, N)
         elif mode[0] == 'rand':
             # Initialize dataset to zeros and create data on the fly 
             target = torch.zeros(data_size, K, N)
-    if normalize:
-        y = torch.fft.fft(target, dim=-1)
-        y /= torch.norm(y, dim=-1).unsqueeze(2)
-        target = torch.fft.ifft(y, dim=-1)
-        target = target.type(torch.float32)
-    target.to(device)
-    source, target = bs_calc(target)
-    # if N % window_size != 0:
-    #     pdb.set_trace()
-    #     padding = (window_size - (N % window_size)) % window_size
-    #     source = F.pad(target, (0, padding, 0, padding))
-    #     print(f"Padding the bispectrum with {padding}")
-    if mode[0] == 'opt' and mode[1] == 'shift' and not read_baseline:
-            target, shifts = rand_shift_signal(target, K, N, data_size)
+        data = target
+        if noisy:
+            data += hparams.sigma * torch.randn(data_size, K, N)
+    data.to(device)
+    source, data = bs_calc(data)
     dataset = BispectrumDataset(source, target)
 
     return dataset
-
 def set_activation(activation_name):
     #['ELU', 'LeakyReLU', 'ReLU', 'Softsign', 'Tanh'])
    
@@ -536,7 +542,7 @@ def set_scheduler(scheduler_name, optimizer, epochs, lr, len_trainloader):
 #     return suffix
 
 def create_test_name(args):
-    test_str = f'K{args.K}_N{args.N}_bs{args.batch_size}_ep{args.epochs}_'\
+    test_str = f'K{args.K}_N{args.N}_win{args.window_size}_bs{args.batch_size}_ep{args.epochs}_'\
                     f'tr{args.train_data_size}_val{args.val_data_size}_'\
                     f'lr_{args.lr:.1e}_{args.optimizer}_'
     if args.scheduler != 'None':
@@ -601,6 +607,9 @@ def _train_impl(device, args, params, is_distributed=False):
         args = set_debug_args(args)
     
     test_name = create_test_name(args)
+ 
+    # Initialize args
+    folder_matlab, folder_python = init(args, test_name)
     
     # Initialize wandb
     if device == 0:
@@ -621,13 +630,10 @@ def _train_impl(device, args, params, is_distributed=False):
             wandb.save("train_main.py")
             wandb.save(f"model{args.model}.py") 
             # Save wandb run id to the output folder
-            folder_python = os.path.join('output', test_name)
             np.savetxt(f'{folder_python}/wandb_run_id.csv', [wandb.run.id], fmt='%s')  
-            print(f'Starting wandb with {resume_mode}')
         print(f'Running with {args.nprocs} GPUs')
             
-    # Initialize args
-    folder_matlab, folder_python = init(args, test_name)
+
 
     # Initialize model and optimizer
     model = get_model(device, args, is_distributed)
@@ -643,8 +649,7 @@ def _train_impl(device, args, params, is_distributed=False):
     train_dataset = create_dataset(device, args.train_data_size, args.K, args.N,
                                    read_baseline_train, args.mode,
                                    folder_matlab, args.data_type, 
-                                   args.window_size, 
-                                   args.normalize, is_distributed)
+                                   args.normalize, is_distributed, args.noisy)
     
     train_loader = prepare_data_loader(train_dataset, args.batch_size, is_distributed)
     # Set validation dataset and dataloader 
@@ -654,7 +659,7 @@ def _train_impl(device, args, params, is_distributed=False):
     val_dataset = create_dataset(device, args.val_data_size, args.K, args.N,
                                  read_baseline_val, ['opt', 'none'],
                                  folder_matlab, args.data_type,
-                                 args.normalize, is_distributed)
+                                 args.normalize, is_distributed, args.noisy)
     
     val_loader = prepare_data_loader(val_dataset, args.batch_size, is_distributed)
     

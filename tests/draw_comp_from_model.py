@@ -203,7 +203,7 @@ for idx, (source, target) in dataloader:
     target = target.to(device)
     
     # Set output folder per sample
-    folder_write = os.path.join(output_path, f'sample{i}')
+    folder_write = os.path.join(output_path, f'sample{i+1}')
     if not os.path.exists(folder_write):
         os.mkdir(folder_write)
   
@@ -272,31 +272,49 @@ for idx, (source, target) in dataloader:
         # plt.savefig(fig_path)        
         # plt.close()
         
-        # fig 3
-        fig_path = os.path.join(folder_write, 'comp_s1_s1_pred.jpg')
-        plt.figure(figsize=(9, 5))
-        plt.title(f'Comparison between s1, s1_pred, sample{i}')
-        plt.plot(target[0].cpu().detach().numpy(), label='s1', color='tab:blue')
-        plt.plot(output[0].cpu().detach().numpy(), label='s1_pred', color='tab:orange', linestyle='dashed')
-    
-        plt.ylabel('signal')
-        plt.xlabel('time')
-        plt.legend()
-        plt.savefig(fig_path)        
-        plt.close()
         
-        # fig 4
-        fig_path = os.path.join(folder_write, 'comp_s2_s2_pred.jpg')
-        plt.figure(figsize=(9, 5))
-        plt.title(f'Comparison between s2, s2_pred, sample{i}')
-        plt.plot(target[1].cpu().detach().numpy(), label='s2', color='tab:green')
-        plt.plot(output[1].cpu().detach().numpy(), label='s2_pred', color='tab:red', linestyle='dashed')
+        for k in range(K):
+            folder_k = os.path.join(folder_write, f'{k+1}')
+            if not os.path.exists(folder_k):
+                os.mkdir(folder_k)
+                
+            # fig
+            fig_path = os.path.join(folder_k, f'comp_s{k+1}_s{k+1}_pred.jpg')
+            plt.figure(figsize=(9, 5))
+            plt.title(f'Comparison between s{k+1}, s{k+1}_pred, sample{i + 1}')
+            plt.plot(target[k].cpu().detach().numpy(), label=f's{k+1}', color='tab:blue')
+            plt.plot(output[k].cpu().detach().numpy(), label=f's{k+1}_pred', color='tab:orange', linestyle='dashed')
+        
+            plt.ylabel('signal')
+            plt.xlabel('time')
+            plt.legend()
+            plt.savefig(fig_path)        
+            plt.close()
+        # # fig 3
+        # fig_path = os.path.join(folder_write, 'comp_s1_s1_pred.jpg')
+        # plt.figure(figsize=(9, 5))
+        # plt.title(f'Comparison between s1, s1_pred, sample{i}')
+        # plt.plot(target[0].cpu().detach().numpy(), label='s1', color='tab:blue')
+        # plt.plot(output[0].cpu().detach().numpy(), label='s1_pred', color='tab:orange', linestyle='dashed')
     
-        plt.ylabel('signal')
-        plt.xlabel('time')
-        plt.legend()
-        plt.savefig(fig_path)        
-        plt.close()
+        # plt.ylabel('signal')
+        # plt.xlabel('time')
+        # plt.legend()
+        # plt.savefig(fig_path)        
+        # plt.close()
+        
+        # # fig 4
+        # fig_path = os.path.join(folder_write, 'comp_s2_s2_pred.jpg')
+        # plt.figure(figsize=(9, 5))
+        # plt.title(f'Comparison between s2, s2_pred, sample{i}')
+        # plt.plot(target[1].cpu().detach().numpy(), label='s2', color='tab:green')
+        # plt.plot(output[1].cpu().detach().numpy(), label='s2_pred', color='tab:red', linestyle='dashed')
+    
+        # plt.ylabel('signal')
+        # plt.xlabel('time')
+        # plt.legend()
+        # plt.savefig(fig_path)        
+        # plt.close()
     else:
         if K == 1:
             output, _ = aligner(output, target)
@@ -313,7 +331,7 @@ for idx, (source, target) in dataloader:
                                     output.squeeze(0)[j].cpu().detach().numpy(),
                                     folder_k,
                                     baseline[i][j])     
-    rel_error_X = torch.norm(target - output) / torch.norm(target)
+    rel_error_X = torch.norm(target - output)**2 / torch.norm(target)**2
     rel_error_X_path = os.path.join(folder_write, 'rel_error_X.csv')
     np.savetxt(rel_error_X_path, [rel_error_X.item()])
     print(f'sample{i}, err={rel_error_X}')  

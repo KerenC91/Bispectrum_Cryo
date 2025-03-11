@@ -76,6 +76,8 @@ if __name__ == "__main__":
             help='the size of the train data') 
     parser.add_argument('--val_data_size', type=int, default=100, metavar='N',
             help='the size of the validate data')  
+    parser.add_argument('--noisy', action='store_true', 
+                        help='noisy dataset')
     # baseline data
     parser.add_argument('--comp_test_name_m', type=str, default='',
             help='baseline data folder results for comparison') 

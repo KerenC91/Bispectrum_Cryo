@@ -81,10 +81,11 @@ class Trainer:
         self.min_loss_epoch = 0        
         self.autocast = torch.cuda.amp.autocast(enabled=args.fp16)
         self.scaler = torch.cuda.amp.GradScaler(enabled=args.fp16)
+        self.noisy = args.noisy
         
-        print(f'args.fp16={args.fp16}')
-        print(f'self.autocast={self.autocast}')
-        print(f'self.scaler={self.scaler}')
+        # print(f'args.fp16={args.fp16}')
+        # print(f'self.autocast={self.autocast}')
+        # print(f'self.scaler={self.scaler}')
         
     def _loss(self, pred, target):
         total_loss = 0.
@@ -226,6 +227,7 @@ class Trainer:
         
         pred, _ = self.aligner(pred, target)
         loss1 = self._loss_MSE(pred, target)
+        
         reversed_pred, _ = self.aligner(reversed_pred, target)
         loss2 = self._loss_MSE(reversed_pred, target)
         # get the index for the minimal loss
@@ -341,13 +343,18 @@ class Trainer:
             target = target.unsqueeze(1)
         else:
             target = torch.randn(self.batch_size, self.signals_count, self.target_len)
+
         if self.normalize:
             y = torch.fft.fft(target, dim=-1)
             y /= torch.norm(y, dim=-1).unsqueeze(2)
             target = torch.fft.ifft(y, dim=-1) 
             target = target.type(torch.float32)
         
-        source, target = self.bs_calc(target)
+        if self.noisy:
+            data = target + hparams.sigma * torch.randn(self.batch_size, self.signals_count, self.target_len)
+            source, data = self.bs_calc(data)
+        else:
+            source, target = self.bs_calc(target)
 
         if self.mode[1] == 'shift':
             target, shifts = rand_shift_signal(target, 
