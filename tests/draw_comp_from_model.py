@@ -240,39 +240,7 @@ for idx, (source, target) in dataloader:
 
         output_avg = (output[0] + output[1]) / 2
         target_avg = (target[0] + target[1]) / 2
-        rel_error_X = torch.norm(target - output) / torch.norm(target)
-        
-        # # fig 1
-        # fig_path = os.path.join(folder_write, 'comp_s1_pred_s2_pred_preds_avg.jpg')
-        # plt.figure(figsize=(9, 5))
-        # plt.title(f'Comparison between s1_pred, s2_pred, pred_avg, sample{i}, rel_mse={rel_error_X:.03f}')
-        # plt.plot(output[0].cpu().detach().numpy(), label='s1_pred', color='tab:orange')
-        # plt.plot(output[1].cpu().detach().numpy(), label='s2_pred', color='tab:red')
-        # plt.plot(output_avg.cpu().detach().numpy(), label='avg_pred', color='tab:blue', linestyle='dashed')
-        # plt.plot(target_avg.cpu().detach().numpy(), label='target_avg', color='tab:green')
-    
-        # plt.ylabel('signal')
-        # plt.xlabel('time')
-        # plt.legend()
-        # plt.savefig(fig_path)        
-        # plt.close()
-        
-        # # fig 2
-        # fig_path = os.path.join(folder_write, 'comp_s1_s2_s1_pred_s2_pred.jpg')
-        # plt.figure(figsize=(9, 5))
-        # plt.title(f'Comparison between s1, s2, s1_pred, s2_pred, sample{i}')
-        # plt.plot(target[0].cpu().detach().numpy(), label='s1', color='tab:blue')
-        # plt.plot(target[1].cpu().detach().numpy(), label='s2', color='tab:green')
-        # plt.plot(output[0].cpu().detach().numpy(), label='s1_pred', color='tab:orange', linestyle='dashed')
-        # plt.plot(output[1].cpu().detach().numpy(), label='s2_pred', color='tab:red', linestyle='dashed')
-    
-        # plt.ylabel('signal')
-        # plt.xlabel('time')
-        # plt.legend()
-        # plt.savefig(fig_path)        
-        # plt.close()
-        
-        
+               
         for k in range(K):
             folder_k = os.path.join(folder_write, f'{k+1}')
             if not os.path.exists(folder_k):
@@ -290,31 +258,6 @@ for idx, (source, target) in dataloader:
             plt.legend()
             plt.savefig(fig_path)        
             plt.close()
-        # # fig 3
-        # fig_path = os.path.join(folder_write, 'comp_s1_s1_pred.jpg')
-        # plt.figure(figsize=(9, 5))
-        # plt.title(f'Comparison between s1, s1_pred, sample{i}')
-        # plt.plot(target[0].cpu().detach().numpy(), label='s1', color='tab:blue')
-        # plt.plot(output[0].cpu().detach().numpy(), label='s1_pred', color='tab:orange', linestyle='dashed')
-    
-        # plt.ylabel('signal')
-        # plt.xlabel('time')
-        # plt.legend()
-        # plt.savefig(fig_path)        
-        # plt.close()
-        
-        # # fig 4
-        # fig_path = os.path.join(folder_write, 'comp_s2_s2_pred.jpg')
-        # plt.figure(figsize=(9, 5))
-        # plt.title(f'Comparison between s2, s2_pred, sample{i}')
-        # plt.plot(target[1].cpu().detach().numpy(), label='s2', color='tab:green')
-        # plt.plot(output[1].cpu().detach().numpy(), label='s2_pred', color='tab:red', linestyle='dashed')
-    
-        # plt.ylabel('signal')
-        # plt.xlabel('time')
-        # plt.legend()
-        # plt.savefig(fig_path)        
-        # plt.close()
     else:
         if K == 1:
             output, _ = aligner(output, target)
