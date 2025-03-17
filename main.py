@@ -76,7 +76,6 @@ if __name__ == "__main__":
             help='the size of the train data') 
     parser.add_argument('--val_data_size', type=int, default=100, metavar='N',
             help='the size of the validate data')  
-    parser.add_argument('--noisy', action='store_true', 
                         help='noisy dataset')
     # baseline data
     parser.add_argument('--comp_test_name_m', type=str, default='',
@@ -84,8 +83,7 @@ if __name__ == "__main__":
     parser.add_argument('--read_baseline', type=int, default=0, 
                         help='0: no action, 1: read from matlab to training set'
                         '2: read from matlab to validation set')
-    parser.add_argument('--normalize', action='store_true',
-                        help='normalizing data for True, else False (default)')
+
     # wandb
     parser.add_argument('--wandb', action='store_true', help='Log data using wandb') 
     parser.add_argument('--wandb_proj_name', type=str, default='BS_G_inv_multi_gpu', 

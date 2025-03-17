@@ -72,56 +72,17 @@ def read_dataset_from_baseline(folder_matlab, data_size, K, N, label='x_true'):
             target[i][j] = read_org(folder, j, K, label)   
     
     return target
-   
-# def create_dataset(device, data_size, K, N, read_baseline, mode, 
-#                    folder_matlab, data_type, window_size, normalize=False, is_distributed=False):
-#     if is_distributed:
-#         device='cpu'
-#     bs_calc = BispectrumCalculator(K, N, device).to(device)
-#     print(f'read_baseline={read_baseline}, mode={mode}')
-#     if read_baseline: # in val dataset
-#         if data_type == 'gaussian_pulse':
-#             print("Error! Gaussian pulse does not have data to read from.")
-#             sys.exit(1)
-#         target = read_dataset_from_baseline(folder_matlab, data_size, K, N)
-#     else:
-#         if mode[0] == 'opt':
-#             # Create random dataset
-#             if data_type == 'gaussian_pulse':
-#                 eff_data_size = data_size * K
-#                 target = torch.zeros(eff_data_size, N)
-#                 n_per_side = N / 2.0
-#                 percentage = 0.1
-#                 mean = np.random.uniform(-n_per_side, n_per_side, eff_data_size) - percentage * n_per_side
-#                 std = np.random.uniform(0.0, 1000.0, eff_data_size)
-#                 for i in range(eff_data_size):
-#                     target[i], _ = create_gaussian_pulse(mean[i], std[i], N)
-#                 target = target.view(data_size, K, N)
-#             else: # normal distribution
-#                 target = torch.randn(data_size, K, N)
-#         elif mode[0] == 'rand':
-#             # Initialize dataset to zeros and create data on the fly 
-#             target = torch.zeros(data_size, K, N)
-#     if normalize:
-#         y = torch.fft.fft(target, dim=-1)
-#         y /= torch.norm(y, dim=-1).unsqueeze(2)
-#         target = torch.fft.ifft(y, dim=-1)
-#         target = target.type(torch.float32)
-#     target.to(device)
-#     source, target = bs_calc(target)
-#     if mode[0] == 'opt' and mode[1] == 'shift' and not read_baseline:
-#             target, shifts = rand_shift_signal(target, K, N, data_size)
-#     dataset = BispectrumDataset(source, target)
-
-#     return dataset
 
 def create_dataset(device, data_size, K, N, read_baseline, mode, 
-                   folder_matlab, data_type, normalize=False, is_distributed=False, noisy=False):
+                   folder_matlab, data_type, is_distributed=False, noisy=False):
     if is_distributed:
         device='cpu'
     bs_calc = BispectrumCalculator(K, N, device).to(device)
     print(f'read_baseline={read_baseline}, mode={mode}')
     if read_baseline: # in val dataset
+        if data_type == 'gaussian_pulse':
+            print("Error! Gaussian pulse does not have data to read from.")
+            sys.exit(1)
         target = read_dataset_from_baseline(folder_matlab, data_size, K, N)
         if noisy:
             data = read_dataset_from_baseline(folder_matlab, data_size, K, N, label="data")
@@ -129,7 +90,19 @@ def create_dataset(device, data_size, K, N, read_baseline, mode,
             data = target
     else:
         if mode[0] == 'opt':
-            target = torch.randn(data_size, K, N)
+            # Create random dataset
+            if data_type == 'gaussian_pulse':
+                eff_data_size = data_size * K
+                target = torch.zeros(eff_data_size, N)
+                n_per_side = N / 2.0
+                percentage = 0.1
+                mean = np.random.uniform(-n_per_side, n_per_side, eff_data_size) - percentage * n_per_side
+                std = np.random.uniform(0.0, 1000.0, eff_data_size)
+                for i in range(eff_data_size):
+                    target[i], _ = create_gaussian_pulse(mean[i], std[i], N)
+                target = target.view(data_size, K, N)
+            else: # normal distribution
+                target = torch.randn(data_size, K, N)
         elif mode[0] == 'rand':
             # Initialize dataset to zeros and create data on the fly 
             target = torch.zeros(data_size, K, N)
@@ -138,9 +111,14 @@ def create_dataset(device, data_size, K, N, read_baseline, mode,
             data += hparams.sigma * torch.randn(data_size, K, N)
     data.to(device)
     source, data = bs_calc(data)
+    
+    if mode[0] == 'opt' and mode[1] == 'shift' and not read_baseline:
+        target, shifts = rand_shift_signal(target, K, N, data_size)
+        
     dataset = BispectrumDataset(source, target)
 
     return dataset
+
 def set_activation(activation_name):
     #['ELU', 'LeakyReLU', 'ReLU', 'Softsign', 'Tanh'])
    
@@ -649,7 +627,7 @@ def _train_impl(device, args, params, is_distributed=False):
     train_dataset = create_dataset(device, args.train_data_size, args.K, args.N,
                                    read_baseline_train, args.mode,
                                    folder_matlab, args.data_type, 
-                                   args.normalize, is_distributed, args.noisy)
+                                   is_distributed, args.noisy)
     
     train_loader = prepare_data_loader(train_dataset, args.batch_size, is_distributed)
     # Set validation dataset and dataloader 
@@ -659,7 +637,7 @@ def _train_impl(device, args, params, is_distributed=False):
     val_dataset = create_dataset(device, args.val_data_size, args.K, args.N,
                                  read_baseline_val, ['opt', 'none'],
                                  folder_matlab, args.data_type,
-                                 args.normalize, is_distributed, args.noisy)
+                                 is_distributed, args.noisy)
     
     val_loader = prepare_data_loader(val_dataset, args.batch_size, is_distributed)
     
